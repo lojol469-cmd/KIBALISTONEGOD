@@ -100,8 +100,5 @@ yarn-error.log*
 *.bak
 app.backup.py
 
-# Dossiers spécifiques du projet
-RISK/
-A3E/
-MAP/
-simulation_engine.py
+# Fichiers HTML volumineux
+risk_3d.html
