@@ -1,0 +1,6 @@
+Action,Commande CMD (actuelle),Commande Linux / PowerShell
+Lister les fichiers,dir,ls
+Effacer l'écran,cls,clear
+Créer un dossier,mkdir,mkdir
+Supprimer un fichier,del,rm
+Déplacer/Renommer,move,mv

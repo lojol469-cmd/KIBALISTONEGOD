@@ -1,0 +1,120 @@
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/.gitattributes
+ out=.gitattributes
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/.gitignore
+ out=.gitignore
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/LICENSE
+ out=LICENSE
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/README.md
+ out=README.md
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/README_en.md
+ out=README_en.md
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/config.json
+ out=config.json
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/configuration.json
+ out=configuration.json
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/configuration_chatglm.py
+ out=configuration_chatglm.py
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/generation_config.json
+ out=generation_config.json
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/model-00001-of-00015.safetensors
+ out=model-00001-of-00015.safetensors
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/model-00002-of-00015.safetensors
+ out=model-00002-of-00015.safetensors
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/model-00003-of-00015.safetensors
+ out=model-00003-of-00015.safetensors
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/model-00004-of-00015.safetensors
+ out=model-00004-of-00015.safetensors
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/model-00005-of-00015.safetensors
+ out=model-00005-of-00015.safetensors
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/model-00006-of-00015.safetensors
+ out=model-00006-of-00015.safetensors
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/model-00007-of-00015.safetensors
+ out=model-00007-of-00015.safetensors
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/model-00008-of-00015.safetensors
+ out=model-00008-of-00015.safetensors
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/model-00009-of-00015.safetensors
+ out=model-00009-of-00015.safetensors
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/model-00010-of-00015.safetensors
+ out=model-00010-of-00015.safetensors
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/model-00011-of-00015.safetensors
+ out=model-00011-of-00015.safetensors
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/model-00012-of-00015.safetensors
+ out=model-00012-of-00015.safetensors
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/model-00013-of-00015.safetensors
+ out=model-00013-of-00015.safetensors
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/model-00014-of-00015.safetensors
+ out=model-00014-of-00015.safetensors
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/model-00015-of-00015.safetensors
+ out=model-00015-of-00015.safetensors
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/model.safetensors.index.json
+ out=model.safetensors.index.json
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/modeling_chatglm.py
+ out=modeling_chatglm.py
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/tokenization_chatglm.py
+ out=tokenization_chatglm.py
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/tokenizer.model
+ out=tokenizer.model
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/tokenizer_config.json
+ out=tokenizer_config.json
+ dir=models/glm-4v-9b
+
+https://huggingface.co/THUDM/glm-4v-9b/resolve/main/visual.py
+ out=visual.py
+ dir=models/glm-4v-9b
+

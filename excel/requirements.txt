@@ -1,0 +1,9 @@
+streamlit
+pandas
+plotly
+reportlab
+Pillow
+cloudinary
+requests
+python-dotenv
+matplotlib

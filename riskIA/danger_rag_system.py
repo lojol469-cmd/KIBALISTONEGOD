@@ -30,15 +30,19 @@ from reportlab.pdfgen import canvas
 import io
 
 # Import des analyses complètes du logiciel principal
-try:
-    import sys
-    sys.path.append(os.path.dirname(__file__))
-    sys.path.append(r"C:\Users\Admin\Desktop\logiciel\riskIA")
-    from risk_simulation_app import RiskSimulator, SimulationEngine
-except ImportError:
-    print("Warning: Could not import risk_simulation_app modules")
-    RiskSimulator = None
-    SimulationEngine = None
+# Removed circular import
+# try:
+#     import sys
+#     sys.path.append(os.path.dirname(__file__))
+#     sys.path.append(r"C:\Users\Admin\Desktop\logiciel\riskIA")
+#     from risk_simulation_app import RiskSimulator, SimulationEngine
+# except ImportError:
+#     print("Warning: Could not import risk_simulation_app modules")
+#     RiskSimulator = None
+#     SimulationEngine = None
+
+RiskSimulator = None
+SimulationEngine = None
 from datetime import datetime
 import logging
 

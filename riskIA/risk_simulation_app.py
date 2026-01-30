@@ -3,18 +3,22 @@ import os
 import json
 import numpy as np
 import cv2
+from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QPushButton, QLabel, QLineEdit,
-    QFileDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QComboBox, QMessageBox, QTextEdit, QCheckBox
+    QFileDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QComboBox, QMessageBox, QTextEdit, QCheckBox, QScrollArea,
+    QDialog, QGroupBox
 )
-from PyQt6.QtGui import QPixmap, QImage, QDesktopServices
+from PyQt6.QtGui import QPixmap, QImage, QDesktopServices, QIcon
 from PyQt6.QtCore import Qt, QUrl, QThread, pyqtSignal
 from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtSvgWidgets import QSvgWidget
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.patches import Rectangle, Circle, FancyBboxPatch, PathPatch
 from matplotlib.path import Path
+from matplotlib.colors import Normalize
 import matplotlib.patches as mpatches
 
 import plotly.graph_objects as go
@@ -48,6 +52,69 @@ from danger_rag_system import DangerRAGSystem
 
 # Module de génération de livre PDF
 from web import generate_adapted_danger_analysis
+
+# IoT MQTT
+try:
+    import paho.mqtt.client as mqtt
+    MQTT_AVAILABLE = True
+except ImportError:
+    MQTT_AVAILABLE = False
+    print("Warning: paho-mqtt not available. IoT features disabled.")
+
+# Thread pour MQTT
+class MQTTThread(QThread):
+    data_received = pyqtSignal(str)  # Signal pour données reçues
+    alert_triggered = pyqtSignal(str)  # Signal pour alertes
+    connection_success = pyqtSignal()  # Signal pour connexion réussie
+
+    def __init__(self, broker, port, topic):
+        super().__init__()
+        self.broker = broker
+        self.port = int(port)
+        self.topic = topic
+        self.client = None
+        self.running = True
+
+    def run(self):
+        if not MQTT_AVAILABLE:
+            return
+        self.client = mqtt.Client()  # type: ignore
+        self.client.on_connect = self.on_connect
+        self.client.on_message = self.on_message
+        try:
+            self.client.connect(self.broker, self.port, 60)
+            self.client.loop_start()
+            while self.running:
+                self.msleep(100)
+        except Exception as e:
+            print(f"MQTT connection error: {e}")
+
+    def on_connect(self, client, userdata, flags, rc):
+        if rc == 0:
+            client.subscribe(self.topic)
+            print(f"Connected to MQTT broker {self.broker}, subscribed to {self.topic}")
+            self.connection_success.emit()
+        else:
+            print(f"Failed to connect to MQTT broker, code {rc}")
+
+    def on_message(self, client, userdata, msg):
+        data = msg.payload.decode()
+        self.data_received.emit(data)
+        # Vérifier seuils pour alertes
+        try:
+            json_data = json.loads(data)
+            if 'temperature' in json_data and json_data['temperature'] > 50:
+                self.alert_triggered.emit(f"ALERTE: Température élevée {json_data['temperature']}°C")
+            if 'pressure' in json_data and json_data['pressure'] > 100:
+                self.alert_triggered.emit(f"ALERTE: Pression élevée {json_data['pressure']} bar")
+        except:
+            pass
+
+    def stop(self):
+        self.running = False
+        if self.client:
+            self.client.loop_stop()
+            self.client.disconnect()
 
 # Supprimer les warnings
 import warnings
@@ -123,14 +190,95 @@ class AIAnalysisThread(QThread):
         except Exception as e:
             self.result_ready.emit(f"Erreur IA: {str(e)}")
 
+class AIChatThread(QThread):
+    token_ready = pyqtSignal(str)
+    response_complete = pyqtSignal(str)
+    
+    def __init__(self, model_path, message, image_path=None, chat_history=None):
+        super().__init__()
+        self.model_path = model_path
+        self.message = message
+        self.image_path = image_path
+        self.chat_history = chat_history or []
+    
+    def run(self):
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(self.model_path)
+            model = AutoModelForCausalLM.from_pretrained(self.model_path, torch_dtype=torch.float16, device_map="auto")
+            
+            # Construire le contexte avec l'historique
+            context = ""
+            for user_msg, ai_msg in self.chat_history[-5:]:  # Garder les 5 derniers échanges
+                context += f"Utilisateur: {user_msg}\nIA: {ai_msg}\n"
+            
+            # Analyse d'image si disponible
+            image_description = ""
+            if self.image_path and os.path.exists(self.image_path):
+                processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+                clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+                image = Image.open(self.image_path).convert('RGB')
+                
+                texts = [
+                    "a photo of buildings", "a photo of large buildings", "a photo of small buildings",
+                    "a photo of fences", "a photo of long fences", "a photo of enclosures",
+                    "a photo of industrial site", "a photo of oil platform", "a photo of risk areas",
+                    "a photo of secure areas", "a photo of danger zones", "a photo of safety equipment"
+                ]
+                
+                inputs = processor(text=texts, images=image, return_tensors="pt", padding=True)  # type: ignore
+                outputs = clip_model(**inputs)
+                logits_per_image = outputs.logits_per_image
+                probs = logits_per_image.softmax(dim=1).squeeze()
+                top_indices = probs.topk(3).indices
+                image_description = "Description de l'image: " + ", ".join([texts[i] for i in top_indices])
+            
+            # Prompt système
+            system_prompt = f"""Tu es un expert en analyse de risques pour plateformes pétrolières et sites industriels.
+Tu analyses les images et réponds aux questions de l'utilisateur de manière précise et utile.
+{image_description}
+
+Historique de conversation:
+{context}
+
+Question de l'utilisateur: {self.message}
+
+Réponds de manière concise mais complète, en français."""
+            
+            inputs = tokenizer(system_prompt, return_tensors="pt").to(model.device)
+            
+            # Génération
+            outputs = model.generate(**inputs, max_new_tokens=300, temperature=0.7, do_sample=True, 
+                                   pad_token_id=tokenizer.eos_token_id)
+            full_response = tokenizer.decode(outputs[0][len(inputs['input_ids'][0]):], skip_special_tokens=True)
+            
+            # Simuler le streaming en envoyant des tokens
+            import time
+            for i in range(0, len(full_response), 5):
+                token = full_response[i:i+5]
+                self.token_ready.emit(token)
+                time.sleep(0.1)
+            
+            self.response_complete.emit(full_response)
+            
+        except Exception as e:
+            self.response_complete.emit(f"Erreur IA: {str(e)}")
+
 def load_image_unicode(path):
     try:
+        logging.info(f"Tentative de chargement de l'image: {path}")
         with open(path, 'rb') as f:
             data = f.read()
+        logging.info(f"Fichier lu, taille: {len(data)} bytes")
         arr = np.frombuffer(data, np.uint8)
+        logging.info("Conversion en array numpy")
         img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img is None:
+            logging.error("cv2.imdecode a retourné None")
+        else:
+            logging.info(f"Image décodée, shape: {img.shape}")
         return img
-    except:
+    except Exception as e:
+        logging.error(f"Erreur lors du chargement de l'image: {e}")
         return None
 
 # =====================================
@@ -149,6 +297,12 @@ class SimulationEngine:
         # vent
         self.wind_x = 1.0
         self.wind_y = 0.3
+
+        # Paramètres IoT (valeurs par défaut)
+        self.temperature = 20.0  # °C
+        self.pressure = 1013.0  # hPa
+        self.vibration = 0.0    # amplitude
+        self.humidity = 50.0    # %
 
     def simulate_smoke(self):
         field = np.zeros((self.h, self.w), dtype=np.float32)
@@ -170,6 +324,10 @@ class SimulationEngine:
         # renforce autour de la source
         fire[self.src_y, self.src_x] += 2.0
         fire = gaussian_filter(fire, sigma=25)
+
+        # Influence de la température IoT
+        temp_factor = max(0.5, min(2.0, self.temperature / 20.0))  # Température normale = 20°C
+        fire *= temp_factor
 
         return fire / (fire.max() + 1e-6)
 
@@ -210,6 +368,10 @@ class SimulationEngine:
 
         # atténuation par le terrain
         shock *= (0.5 + 0.5 * self.map)
+
+        # Influence de la pression IoT (pression basse = explosion plus violente)
+        pressure_factor = max(0.5, min(2.0, 1013.0 / self.pressure))  # Pression normale = 1013 hPa
+        shock *= pressure_factor
 
         return shock / (shock.max() + 1e-6)
 
@@ -258,28 +420,155 @@ class HeatmapWidget(QWidget):
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout()
-        self.figure, self.axes = plt.subplots(3, 2, figsize=(10, 12))
+        self.figure, self.axes = plt.subplots(3, 2, figsize=(12, 15))
         self.canvas = FigureCanvas(self.figure)
         layout.addWidget(self.canvas)
         self.setLayout(layout)
 
+        # Configurer les colormaps avancés pour une précision maximale
+        self.cmaps = {
+            "Fumée": "Blues_r",  # Inversé pour plus sombre = plus de risque
+            "Feu": "RdYlBu_r",  # Rouge-jaune-bleu inversé pour chaleur
+            "Électricité": "plasma",  # Plasma pour gradients électriques
+            "Inondation": "YlGnBu",  # Jaune-vert-bleu pour eau
+            "Explosion": "inferno"   # Inferno pour impacts violents
+        }
+
+        # Niveaux de risque pour classification précise
+        self.risk_levels = {
+            "Fumée": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+            "Feu": [0.0, 0.3, 0.5, 0.7, 0.9, 1.0],
+            "Électricité": [0.0, 0.1, 0.3, 0.5, 0.8, 1.0],
+            "Inondation": [0.0, 0.25, 0.5, 0.75, 0.9, 1.0],
+            "Explosion": [0.0, 0.15, 0.4, 0.7, 0.85, 1.0]
+        }
+
+        self.risk_labels = ["Très Faible", "Faible", "Modéré", "Élevé", "Très Élevé", "Critique"]
+
     def show_heatmaps(self, sim_engine):
         if sim_engine is None:
             return
+
         hazards = ["Fumée", "Feu", "Électricité", "Inondation", "Explosion"]
         titles = ["Carte de Fumée", "Carte de Feu", "Carte d'Électricité", "Carte d'Inondation", "Carte d'Explosion"]
-        cmaps = ["Blues", "Reds", "Purples", "Greens", "Oranges"]
 
-        for i, (hazard, title, cmap) in enumerate(zip(hazards, titles, cmaps)):
+        # Initialiser norm pour éviter les erreurs Pylance
+        norm = Normalize(vmin=0, vmax=1)
+        # Initialiser data avec le premier hazard pour éviter unbound
+        data = sim_engine.simulate_all(hazards[0])
+
+        for i, (hazard, title) in enumerate(zip(hazards, titles)):
             ax = self.axes.flat[i]
             ax.clear()
+
+            # Obtenir les données de simulation
             data = sim_engine.simulate_all(hazard)
-            im = ax.imshow(data, cmap=cmap)
-            ax.set_title(title)
-            self.figure.colorbar(im, ax=ax, shrink=0.8)
+
+            # Appliquer un filtre gaussien pour lisser et améliorer la précision
+            data_smooth = gaussian_filter(data, sigma=1.0)
+
+            # Utiliser le colormap avancé
+            cmap = plt.get_cmap(self.cmaps[hazard])
+
+            # Normaliser avec des niveaux de risque précis
+            levels = self.risk_levels[hazard]
+            norm = Normalize(vmin=0, vmax=1)
+
+            # Créer l'image avec interpolation pour précision maximale
+            im = ax.imshow(data_smooth, cmap=cmap, norm=norm, interpolation='bilinear', aspect='auto')
+
+            # Ajouter des contours pour les niveaux de risque
+            cs = ax.contour(data_smooth, levels=levels, colors='black', linewidths=0.5, alpha=0.7)
+            ax.clabel(cs, inline=True, fontsize=8, fmt='%.1f')
+
+            ax.set_title(f"{title}\n(Risques Précis)", fontsize=12, fontweight='bold')
+
+            # Colorbar avec niveaux de risque
+            cbar = self.figure.colorbar(im, ax=ax, shrink=0.8, ticks=levels)
+            cbar.set_ticklabels(self.risk_labels)
+            cbar.set_label('Niveau de Risque', rotation=270, labelpad=15)
+
+            # Ajouter une grille pour précision
+            ax.grid(True, alpha=0.3, linestyle='--')
+
+        # Laisser le dernier subplot vide ou pour une vue d'ensemble
+        ax_overview = self.axes.flat[5]
+        ax_overview.clear()
+        ax_overview.set_title("Vue d'Ensemble des Risques", fontsize=12, fontweight='bold')
+
+        # Calculer une carte de risque composite
+        composite_risk = np.zeros_like(data)
+        for hazard in hazards:
+            risk_data = sim_engine.simulate_all(hazard)
+            composite_risk += risk_data * 0.2  # Pondération égale
+
+        composite_smooth = gaussian_filter(composite_risk, sigma=1.5)
+        im_comp = ax_overview.imshow(composite_smooth, cmap='RdYlGn_r', norm=norm, interpolation='bilinear')
+        cbar_comp = self.figure.colorbar(im_comp, ax=ax_overview, shrink=0.8)
+        cbar_comp.set_label('Risque Composite', rotation=270, labelpad=15)
 
         self.figure.tight_layout()
         self.canvas.draw()
+
+    def clear_heatmaps(self):
+        for ax in self.axes.flat:
+            ax.clear()
+        self.figure.clear()
+        self.canvas.draw()
+
+# =====================================
+# ===== FONCTION POUR GÉNÉRER LE LOGO =====
+# =====================================
+
+def generate_logo():
+    """Génère un logo pour RISK-IA avec PIL"""
+    width, height = 300, 100
+    # Créer une image avec fond transparent ou blanc
+    img = Image.new('RGBA', (width, height), (255, 255, 255, 0))  # Transparent
+    draw = ImageDraw.Draw(img)
+    
+    try:
+        # Essayer une police système
+        font = ImageFont.truetype("arial.ttf", 36)  # Police Arial
+    except:
+        font = ImageFont.load_default()  # Police par défaut si Arial pas disponible
+    
+    # Texte principal
+    text = "RISK-IA"
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    x = (width - text_width) // 2
+    y = (height - text_height) // 2
+    
+    # Dessiner le texte avec un effet d'ombre ou contour
+    # Ombre
+    draw.text((x+2, y+2), text, font=font, fill=(100, 100, 100, 128))
+    # Texte principal en noir
+    draw.text((x, y), text, font=font, fill=(0, 0, 0, 255))
+    
+    # Ajouter un sous-titre
+    subtitle = "simulation du risque en milieu pétrolier"
+    try:
+        small_font = ImageFont.truetype("arial.ttf", 14)
+    except:
+        small_font = ImageFont.load_default()
+    
+    bbox_sub = draw.textbbox((0, 0), subtitle, font=small_font)
+    sub_width = bbox_sub[2] - bbox_sub[0]
+    x_sub = (width - sub_width) // 2
+    y_sub = y + text_height + 5
+    draw.text((x_sub, y_sub), subtitle, font=small_font, fill=(100, 100, 100, 255))
+    
+    # Convertir en QPixmap pour PyQt6
+    buffer = io.BytesIO()
+    img.save(buffer, format='PNG')
+    buffer.seek(0)
+    
+    from PyQt6.QtGui import QPixmap
+    pixmap = QPixmap()
+    pixmap.loadFromData(buffer.getvalue(), 'PNG')
+    return pixmap
 
 # =====================================
 # ===== APPLICATION PRINCIPALE =========
@@ -294,8 +583,20 @@ class RiskSimulator(QMainWindow):
         self.image = None
         self.image_path = None
         self.sim_engine = None
+        self.mqtt_thread = None
         self.clip_results = {}  # Pour stocker les résultats de CLIP
         self.ai_analysis_results = {}  # Pour stocker les résultats d'analyse IA
+
+        # Générer et afficher le logo animé SVG
+        logo_path = os.path.join(os.path.dirname(__file__), "logo_animated.svg")
+        self.logo_widget = QSvgWidget(logo_path)
+        self.logo_widget.setFixedSize(300, 100)
+        self.logo_widget.setStyleSheet("margin: 10px;")
+
+        # Définir l'icône de la fenêtre
+        icon_path = os.path.join(os.path.dirname(__file__), "window_icon.png")
+        window_icon = QIcon(icon_path)
+        self.setWindowIcon(window_icon)
 
         # Initialisation Kibali pour analyse avancée
         self.kibali_available = False
@@ -325,12 +626,146 @@ class RiskSimulator(QMainWindow):
 
         self.tabs = QTabWidget()
 
+        # Historique du chat IA
+        self.chat_history = []
+
+        # Stockage des chemins d'images pour les contours
+        self.contour_image_paths = {
+            1: "analyse_incendie_hd.png",
+            2: "analyse_inondation_hd.png",
+            3: "analyse_complete_ia_hd.png"
+        }
+
+    def create_contour_version_group(self, title, image_path, version_num):
+        """Crée un groupe pour une version de contour avec image et bouton grand format"""
+
+        # Groupe pour cette version
+        group = QGroupBox(title)
+        group.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                border: 2px solid #ccc;
+                border-radius: 5px;
+                margin-top: 1ex;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+            }
+        """)
+
+        layout = QVBoxLayout()
+
+        # Label pour l'image
+        image_label = QLabel("Aucune image générée")
+        image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        image_label.setStyleSheet("border: 1px solid #ddd; padding: 10px; min-height: 300px; background-color: #f9f9f9;")
+        image_label.setMinimumSize(500, 350)
+
+        # Layout horizontal pour l'image et le bouton
+        image_layout = QHBoxLayout()
+
+        # Conteneur pour l'image avec scroll si nécessaire
+        image_container = QWidget()
+        image_container_layout = QVBoxLayout()
+        image_container_layout.addWidget(image_label)
+        image_container.setLayout(image_container_layout)
+
+        image_layout.addWidget(image_container, stretch=1)
+
+        # Bouton pour voir en grand format
+        btn_view_large = QPushButton("🔍 Voir en Grand")
+        btn_view_large.setFixedWidth(120)
+        btn_view_large.clicked.connect(lambda: self.show_image_large(image_path, title))
+        image_layout.addWidget(btn_view_large)
+
+        layout.addLayout(image_layout)
+
+        # Stocker la référence du label pour la mise à jour
+        setattr(self, f'version{version_num}_image', image_label)
+
+        group.setLayout(layout)
+        return group
+
+    def show_image_large(self, image_path, title):
+        """Affiche l'image en grand format dans une nouvelle fenêtre"""
+        import os
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Vue Grand Format - {title}")
+        dialog.setModal(True)
+        dialog.resize(1000, 800)
+
+        layout = QVBoxLayout()
+
+        # Label pour l'image
+        image_label = QLabel()
+        image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        if os.path.exists(image_path):
+            pixmap = QPixmap(image_path)
+            if not pixmap.isNull():
+                # Redimensionner pour s'adapter à la fenêtre tout en gardant les proportions
+                scaled_pixmap = pixmap.scaled(dialog.size() * 0.9, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                image_label.setPixmap(scaled_pixmap)
+            else:
+                image_label.setText("❌ Erreur de chargement de l'image")
+        else:
+            image_label.setText(f"📷 Image non trouvée: {image_path}")
+
+        layout.addWidget(image_label)
+
+        # Boutons
+        buttons_layout = QHBoxLayout()
+
+        btn_close = QPushButton("Fermer")
+        btn_close.clicked.connect(dialog.accept)
+        buttons_layout.addWidget(btn_close)
+
+        # Bouton pour sauvegarder
+        btn_save = QPushButton("💾 Sauvegarder")
+        btn_save.clicked.connect(lambda: self.save_large_image(image_path))
+        buttons_layout.addWidget(btn_save)
+
+        layout.addLayout(buttons_layout)
+
+        dialog.setLayout(layout)
+        dialog.exec()
+
+    def save_large_image(self, image_path):
+        """Sauvegarde l'image affichée"""
+        from PyQt6.QtWidgets import QFileDialog
+        import shutil
+
+        if not os.path.exists(image_path):
+            QMessageBox.warning(self, "Erreur", f"Image non trouvée: {image_path}")
+            return
+
+        file_name, _ = QFileDialog.getSaveFileName(
+            self,
+            "Sauvegarder l'image",
+            os.path.basename(image_path),
+            "Images (*.png *.jpg *.jpeg *.bmp)"
+        )
+
+        if file_name:
+            try:
+                shutil.copy2(image_path, file_name)
+                QMessageBox.information(self, "Succès", f"Image sauvegardée sous: {file_name}")
+            except Exception as e:
+                QMessageBox.critical(self, "Erreur", f"Erreur lors de la sauvegarde: {str(e)}")
+
         # === ONGLET 1 : Carte ===
         self.map_label = QLabel("📂 Charge une image satellite ou une photo de zone")
         self.map_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         btn_load = QPushButton("📂 Charger image")
         btn_load.clicked.connect(self.load_image)
+
+        btn_reset = QPushButton("🔄 Réinitialiser")
+        btn_reset.clicked.connect(self.reset_app)
 
         btn_sim = QPushButton("🧪 Lancer 20 simulations")
         btn_sim.clicked.connect(self.run_simulations)
@@ -347,6 +782,7 @@ class RiskSimulator(QMainWindow):
         top_layout.addWidget(QLabel("Installation:"))
         top_layout.addWidget(self.installation_name_input)
         top_layout.addWidget(btn_load)
+        top_layout.addWidget(btn_reset)
         top_layout.addWidget(btn_sim)
         top_layout.addWidget(QLabel("Mode:"))
         top_layout.addWidget(self.combo)
@@ -365,103 +801,126 @@ class RiskSimulator(QMainWindow):
         l2.addWidget(self.heatmap_widget)
         tab2.setLayout(l2)
 
-        # === ONGLET 3 : 3D ===
-        self.web_view = QWebEngineView()
-        self.web_view.setHtml("<h1>Vue 3D</h1><p>La simulation 3D sera affichée ici après génération.</p>")
+        # === ONGLET 3 : Analyses ===
+        self.analysis_figure, self.analysis_axes = plt.subplots(3, 5, figsize=(15, 10))
+        self.analysis_canvas = FigureCanvas(self.analysis_figure)
         tab3 = QWidget()
         l3 = QVBoxLayout()
-        l3.addWidget(self.web_view)
+        l3.addWidget(self.analysis_canvas)
         tab3.setLayout(l3)
+
+        # === ONGLET 4 : 3D ===
+        self.web_view = QWebEngineView()
+        self.web_view.setHtml("<h1>Vue 3D</h1><p>La simulation 3D sera affichée ici après génération.</p>")
+        tab4 = QWidget()
+        l4_old = QVBoxLayout()
+        l4_old.addWidget(self.web_view)
+        tab4.setLayout(l4_old)
 
         self.tabs.addTab(tab1, "🗺️ Carte")
         self.tabs.addTab(tab2, "🔥 Heatmaps")
-        self.tabs.addTab(tab3, "🧊 Vue 3D")
+        self.tabs.addTab(tab3, "📊 Analyses")
+        self.tabs.addTab(tab4, "🧊 Vue 3D")
 
-        # === ONGLET 4 : IA ===
-        self.ai_label = QLabel("Clique sur 'Analyser avec IA' après simulation pour obtenir des insights intelligents.")
-        self.ai_label.setWordWrap(True)
-        btn_ai = QPushButton("🤖 Analyser avec IA")
-        btn_ai.clicked.connect(self.run_ai_analysis)
-        tab4 = QWidget()
-        l4 = QVBoxLayout()
-        l4.addWidget(self.ai_label)
-        l4.addWidget(btn_ai)
-        tab4.setLayout(l4)
+        # === ONGLET 5 : IA CHAT ===
+        chat_layout = QVBoxLayout()
 
-        self.tabs.addTab(tab4, "🤖 IA")
+        # Titre
+        chat_title = QLabel("🤖 CHAT IA - Analyse de l'Image")
+        chat_title.setStyleSheet("font-size: 16px; font-weight: bold; color: #FF6B35;")
+        chat_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        chat_layout.addWidget(chat_title)
 
-        # === ONGLET 5 : Dessin Zone ===
+        # Fenêtre de chat
+        self.chat_display = QTextEdit()
+        self.chat_display.setReadOnly(True)
+        self.chat_display.setMaximumHeight(300)
+        self.chat_display.setStyleSheet("font-family: 'Courier New'; font-size: 10px; background-color: #F5F5F5;")
+        self.chat_display.setPlaceholderText("Réponses de l'IA apparaîtront ici...")
+        chat_layout.addWidget(self.chat_display)
+
+        # Zone de saisie
+        input_layout = QHBoxLayout()
+        self.chat_input = QLineEdit()
+        self.chat_input.setPlaceholderText("Posez une question sur l'image chargée...")
+        self.chat_input.returnPressed.connect(self.send_chat_message)
+        input_layout.addWidget(self.chat_input)
+
+        self.send_btn = QPushButton("📤 Envoyer")
+        self.send_btn.clicked.connect(self.send_chat_message)
+        input_layout.addWidget(self.send_btn)
+
+        chat_layout.addLayout(input_layout)
+
+        # Status
+        self.chat_status = QLabel("Prêt pour le chat IA")
+        self.chat_status.setStyleSheet("color: #666; font-style: italic;")
+        chat_layout.addWidget(self.chat_status)
+
+        tab5 = QWidget()
+        tab5.setLayout(chat_layout)
+
+        self.tabs.addTab(tab5, "🤖 IA Chat")
+
+        # === ONGLET 6 : Dessin Zone ===
         self.drawing_figure, self.drawing_axes = plt.subplots(3, 3, figsize=(12, 10))
         self.drawing_canvas = FigureCanvas(self.drawing_figure)
-        tab5 = QWidget()
-        l5 = QVBoxLayout()
-        l5.addWidget(self.drawing_canvas)
+        tab6 = QWidget()
+        l6 = QVBoxLayout()
+        l6.addWidget(self.drawing_canvas)
         btn_versions = QPushButton("Générer 3 Versions avec Contours")
         btn_versions.clicked.connect(self.generate_image_versions)
-        l5.addWidget(btn_versions)
-        tab5.setLayout(l5)
+        l6.addWidget(btn_versions)
+        tab6.setLayout(l6)
 
-        self.tabs.addTab(tab5, "🎨 Dessin Zone")
+        self.tabs.addTab(tab6, "🎨 Dessin Zone")
 
-        # === ONGLET 6 : Versions avec Contours ===
+        # === ONGLET 7 : Versions avec Contours ===
         self.contours_widget = QWidget()
         contours_layout = QVBoxLayout()
-        
+
         # Titre
         contours_title = QLabel("📋 Versions avec Contours Générées")
         contours_title.setStyleSheet("font-size: 14px; font-weight: bold; margin: 10px;")
         contours_layout.addWidget(contours_title)
-        
-        # Layout horizontal pour les 3 versions
-        versions_layout = QHBoxLayout()
-        
+
+        # Scroll area pour permettre le défilement si nécessaire
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        # Widget conteneur pour le scroll area
+        scroll_widget = QWidget()
+        versions_layout = QVBoxLayout(scroll_widget)
+
         # Version 1
-        self.version1_label = QLabel("Version 1: Contours Simples")
-        self.version1_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.version1_image = QLabel("Aucune image générée")
-        self.version1_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.version1_image.setStyleSheet("border: 2px solid #ccc; padding: 10px; min-height: 200px;")
-        v1_layout = QVBoxLayout()
-        v1_layout.addWidget(self.version1_label)
-        v1_layout.addWidget(self.version1_image)
-        versions_layout.addLayout(v1_layout)
-        
+        v1_group = self.create_contour_version_group("Version 1: Analyse Incendie HD", "analyse_incendie_hd.png", 1)
+        versions_layout.addWidget(v1_group)
+
         # Version 2
-        self.version2_label = QLabel("Version 2: Contours Détaillés")
-        self.version2_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.version2_image = QLabel("Aucune image générée")
-        self.version2_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.version2_image.setStyleSheet("border: 2px solid #ccc; padding: 10px; min-height: 200px;")
-        v2_layout = QVBoxLayout()
-        v2_layout.addWidget(self.version2_label)
-        v2_layout.addWidget(self.version2_image)
-        versions_layout.addLayout(v2_layout)
-        
+        v2_group = self.create_contour_version_group("Version 2: Analyse Inondation HD", "analyse_inondation_hd.png", 2)
+        versions_layout.addWidget(v2_group)
+
         # Version 3
-        self.version3_label = QLabel("Version 3: Contours HD")
-        self.version3_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.version3_image = QLabel("Aucune image générée")
-        self.version3_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.version3_image.setStyleSheet("border: 2px solid #ccc; padding: 10px; min-height: 200px;")
-        v3_layout = QVBoxLayout()
-        v3_layout.addWidget(self.version3_label)
-        v3_layout.addWidget(self.version3_image)
-        versions_layout.addLayout(v3_layout)
-        
-        contours_layout.addLayout(versions_layout)
-        
+        v3_group = self.create_contour_version_group("Version 3: Analyse Complète IA HD", "analyse_complete_ia_hd.png", 3)
+        versions_layout.addWidget(v3_group)
+
+        scroll_area.setWidget(scroll_widget)
+        contours_layout.addWidget(scroll_area)
+
         # Bouton pour actualiser l'affichage
         btn_refresh_contours = QPushButton("🔄 Actualiser Versions")
         btn_refresh_contours.clicked.connect(self.refresh_contour_versions)
         contours_layout.addWidget(btn_refresh_contours)
-        
+
         self.contours_widget.setLayout(contours_layout)
-        tab6 = QWidget()
-        tab6.setLayout(contours_layout)
+        tab7 = QWidget()
+        tab7.setLayout(contours_layout)
 
-        self.tabs.addTab(tab6, "📋 Contours")
+        self.tabs.addTab(tab7, "📋 Contours")
 
-        # === ONGLET 7 : CLIP Risk Analysis ===
+        # === ONGLET 8 : CLIP Risk Analysis ===
         clip_layout = QVBoxLayout()
 
         btn_clip_analyze = QPushButton("🚀 Analyser les risques avec CLIP")
@@ -492,12 +951,12 @@ class RiskSimulator(QMainWindow):
 
         self.clip_widget = QWidget()
         self.clip_widget.setLayout(clip_layout)
-        tab7 = QWidget()
-        tab7.setLayout(clip_layout)
+        tab8 = QWidget()
+        tab8.setLayout(clip_layout)
 
-        self.tabs.addTab(tab7, "🧠 CLIP Risk Analysis")
+        self.tabs.addTab(tab8, "🧠 CLIP Risk Analysis")
 
-        # === ONGLET 8 : ANALYSE ADAPTÉE DES DANGERS ===
+        # === ONGLET 9 : ANALYSE ADAPTÉE DES DANGERS ===
         adapted_layout = QVBoxLayout()
 
         # Titre
@@ -608,34 +1067,187 @@ class RiskSimulator(QMainWindow):
         self.adapted_image_info.setStyleSheet("color: #666; font-style: italic;")
         adapted_layout.addWidget(self.adapted_image_info)
 
-        tab13 = QWidget()
-        tab13.setLayout(adapted_layout)
+        tab14 = QWidget()
+        tab14.setLayout(adapted_layout)
 
-        self.tabs.addTab(tab13, "🎯 Analyse Adaptée")
+        self.tabs.addTab(tab14, "🎯 Analyse Adaptée")
+
+        # === ONGLET 15 : IoT LIVE SIMULATION ===
+        iot_layout = QVBoxLayout()
+
+        # Titre
+        iot_title = QLabel("🔗 SIMULATION IoT EN TEMPS RÉEL")
+        iot_title.setStyleSheet("font-size: 18px; font-weight: bold; color: #FF6B35;")
+        iot_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        iot_layout.addWidget(iot_title)
+
+        # Description
+        iot_desc = QLabel("""
+        <b>Connexion à des capteurs IoT pour simulations live</b><br><br>
+        Connectez-vous à un broker MQTT pour recevoir des données de capteurs en temps réel :
+        <ul>
+        <li>✅ Température → Influence les risques d'incendie</li>
+        <li>✅ Pression → Influence les risques d'explosion</li>
+        <li>✅ Vibrations → Détection de risques structurels</li>
+        <li>✅ Mise à jour automatique des simulations</li>
+        <li>✅ Alertes en cas de seuils dépassés</li>
+        <li>✅ Intégration avec AWS IoT, Azure IoT ou brokers locaux</li>
+        </ul>
+        <b>Format JSON attendu: {"temperature": 25.5, "pressure": 1013.2, "vibration": 0.8, "humidity": 60.0}</b>
+        """)
+        iot_desc.setWordWrap(True)
+        iot_desc.setStyleSheet("font-size: 11px; padding: 10px; background-color: #FFF8DC; border-radius: 5px;")
+        iot_layout.addWidget(iot_desc)
+
+        # Paramètres de connexion
+        conn_layout = QVBoxLayout()
+        conn_title = QLabel("⚙️ PARAMÈTRES DE CONNEXION MQTT")
+        conn_title.setStyleSheet("font-weight: bold; color: #4682B4;")
+        conn_layout.addWidget(conn_title)
+
+        # Broker URL
+        broker_layout = QHBoxLayout()
+        broker_layout.addWidget(QLabel("Broker URL:"))
+        self.iot_broker = QLineEdit()
+        self.iot_broker.setText("broker.hivemq.com")  # Broker public de test
+        self.iot_broker.setPlaceholderText("ex: broker.hivemq.com")
+        broker_layout.addWidget(self.iot_broker)
+        conn_layout.addLayout(broker_layout)
+
+        # Port
+        port_layout = QHBoxLayout()
+        port_layout.addWidget(QLabel("Port:"))
+        self.iot_port = QLineEdit()
+        self.iot_port.setText("1883")
+        port_layout.addWidget(self.iot_port)
+        conn_layout.addLayout(port_layout)
+
+        # Topic
+        topic_layout = QHBoxLayout()
+        topic_layout.addWidget(QLabel("Topic:"))
+        self.iot_topic = QLineEdit()
+        self.iot_topic.setText("sensors/risk")
+        topic_layout.addWidget(self.iot_topic)
+        conn_layout.addLayout(topic_layout)
+
+        iot_layout.addLayout(conn_layout)
+
+        # Boutons
+        btn_layout = QHBoxLayout()
+        self.connect_iot_btn = QPushButton("🔗 Connecter IoT")
+        self.connect_iot_btn.clicked.connect(self.connect_iot)
+        btn_layout.addWidget(self.connect_iot_btn)
+
+        self.disconnect_iot_btn = QPushButton("❌ Déconnecter")
+        self.disconnect_iot_btn.clicked.connect(self.disconnect_iot)
+        self.disconnect_iot_btn.setEnabled(False)
+        btn_layout.addWidget(self.disconnect_iot_btn)
+
+        iot_layout.addLayout(btn_layout)
+
+        # Status
+        self.iot_status = QLabel("🔴 Déconnecté")
+        self.iot_status.setStyleSheet("color: red; font-weight: bold;")
+        iot_layout.addWidget(self.iot_status)
+
+        # Paramètres actuels IoT
+        params_title = QLabel("📈 PARAMÈTRES IoT ACTUELS (utilisés dans les simulations)")
+        params_title.setStyleSheet("font-weight: bold; color: #4682B4;")
+        iot_layout.addWidget(params_title)
+
+        self.iot_params_display = QLabel("""
+        Température: 20.0°C<br>
+        Pression: 1013.0 hPa<br>
+        Vibration: 0.0<br>
+        Humidité: 50.0%
+        """)
+        self.iot_params_display.setStyleSheet("font-size: 11px; padding: 10px; background-color: #E8F4FD; border-radius: 5px;")
+        iot_layout.addWidget(self.iot_params_display)
+
+        # Données reçues
+        data_title = QLabel("📊 DONNÉES IoT REÇUES")
+        data_title.setStyleSheet("font-weight: bold; color: #32CD32;")
+        iot_layout.addWidget(data_title)
+
+        self.iot_data_display = QTextEdit()
+        self.iot_data_display.setMaximumHeight(200)
+        self.iot_data_display.setPlaceholderText("Données des capteurs apparaîtront ici...")
+        iot_layout.addWidget(self.iot_data_display)
+
+        # Alertes
+        alert_title = QLabel("🚨 ALERTES")
+        alert_title.setStyleSheet("font-weight: bold; color: #FF0000;")
+        iot_layout.addWidget(alert_title)
+
+        self.iot_alerts = QTextEdit()
+        self.iot_alerts.setMaximumHeight(100)
+        self.iot_alerts.setPlaceholderText("Alertes en cas de seuils dépassés...")
+        iot_layout.addWidget(self.iot_alerts)
+
+        tab15 = QWidget()
+        tab15.setLayout(iot_layout)
+
+        self.tabs.addTab(tab15, "🔗 IoT Live")
 
         # Initialiser l'affichage des contours
         self.refresh_contour_versions()
 
-        self.setCentralWidget(self.tabs)
+        # Créer une layout principale avec le logo en haut
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(self.logo_widget, alignment=Qt.AlignmentFlag.AlignCenter)  # Logo animé en haut
+        main_layout.addWidget(self.tabs)  # Onglets en dessous
+
+        # Ajouter le texte "powered by SETRAF GABON" en bas
+        powered_label = QLabel("Powered by SETRAF GABON")
+        powered_label.setStyleSheet("font-size: 10px; color: #666; text-align: center; margin: 5px;")
+        powered_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(powered_label)
+
+        # Widget conteneur pour la layout principale
+        main_widget = QWidget()
+        main_widget.setLayout(main_layout)
+        self.setCentralWidget(main_widget)
 
     # ===============================
     def load_image(self):
+        logging.info("Ouverture du dialogue de sélection d'image")
         file, _ = QFileDialog.getOpenFileName(self, "Charger image", "", "Images (*.png *.jpg *.jpeg)")
         if not file:
+            logging.info("Aucun fichier sélectionné")
             return
 
-        logging.info(f"Image chargée: {file}")
+        logging.info(f"Image sélectionnée: {file}")
         self.image_path = file
+        logging.info("Appel de load_image_unicode")
         img = load_image_unicode(file)
         if img is None:
+            logging.error("load_image_unicode a retourné None")
             QMessageBox.critical(self, "Erreur", "Impossible de charger l'image.")
             return
 
+        logging.info(f"Image chargée avec succès, shape: {img.shape}")
+        h, w = img.shape[:2]
+        if w > 2000 or h > 2000:
+            scale = min(2000 / w, 2000 / h)
+            new_w = int(w * scale)
+            new_h = int(h * scale)
+            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+            logging.info(f"Image redimensionnée à {new_w}x{new_h} avec interpolation cubique")
+
+        # Sauvegarder l'image sur le disque pour éviter la mémoire
+        import tempfile
+        import os
+        temp_dir = tempfile.gettempdir()
+        self.temp_image_path = os.path.join(temp_dir, f"risk_sim_{os.getpid()}.png")
+        cv2.imwrite(self.temp_image_path, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+        logging.info(f"Image sauvegardée sur disque: {self.temp_image_path}")
+
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        self.image = img
+        self.image = img  # Garder en mémoire pour les traitements
         self.current_image = img  # Pour l'analyse CLIP
 
         h, w, _ = img.shape
+        logging.info(f"Création de QPixmap depuis la mémoire, dimensions: {w}x{h}")
         qimg = QImage(img.tobytes(), w, h, 3 * w, QImage.Format.Format_RGB888)
         pix = QPixmap.fromImage(qimg).scaled(
             self.map_label.width(),
@@ -644,14 +1256,160 @@ class RiskSimulator(QMainWindow):
             Qt.TransformationMode.SmoothTransformation
         )
         self.map_label.setPixmap(pix)
+        logging.info("Pixmap défini depuis la mémoire")
 
         gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        logging.info("Création de SimulationEngine")
         self.sim_engine = SimulationEngine(gray)
+
+        # Mettre à jour l'affichage des paramètres IoT
+        self.update_iot_params_display()
 
         # Mettre à jour l'info de l'image dans l'onglet Analyse Adaptée
         self.update_adapted_image_info()
+        logging.info("Image chargée complètement")
 
-    # ===============================
+    def reset_app(self):
+        logging.info("Réinitialisation de l'application")
+        self.image = None
+        self.image_path = None
+        self.sim_engine = None
+        self.clip_results = {}
+        self.ai_analysis_results = {}
+        self.map_label.clear()
+        self.map_label.setText("📂 Charge une image satellite ou une photo de zone")
+        # Supprimer le fichier temporaire
+        if hasattr(self, 'temp_image_path') and os.path.exists(self.temp_image_path):
+            try:
+                os.remove(self.temp_image_path)
+                logging.info(f"Fichier temporaire supprimé: {self.temp_image_path}")
+            except Exception as e:
+                logging.warning(f"Impossible de supprimer le fichier temporaire: {e}")
+        # Clear heatmaps
+        self.heatmap_widget.clear_heatmaps()
+        # Clear 3D
+        self.web_view.setHtml("<h1>Vue 3D</h1><p>La simulation 3D sera affichée ici après génération.</p>")
+        # Clear analyses
+        if hasattr(self, 'analysis_figure'):
+            self.analysis_figure.clear()
+            self.analysis_canvas.draw()
+        # Clear CLIP
+        if hasattr(self, 'clip_figure'):
+            self.clip_figure.clear()
+            self.clip_canvas.draw()
+        self.clip_progress.setText("Prêt pour l'analyse CLIP")
+        # Clear adapted
+        self.adapted_status_text.clear()
+        self.adapted_image_info.setText("ℹ️ Aucune image chargée - Chargez d'abord une image dans l'onglet Carte")
+        self.generate_adapted_btn.setEnabled(True)
+        self.open_adapted_pdf_btn.setEnabled(False)
+        # Déconnecter IoT
+        self.disconnect_iot()
+        logging.info("Application réinitialisée")
+
+    def connect_iot(self):
+        if not MQTT_AVAILABLE:
+            QMessageBox.warning(self, "Erreur", "Bibliothèque MQTT non disponible. Installez paho-mqtt.")
+            return
+
+        broker = self.iot_broker.text()
+        port = self.iot_port.text()
+        topic = self.iot_topic.text()
+
+        if not broker or not port or not topic:
+            QMessageBox.warning(self, "Erreur", "Remplissez tous les champs MQTT.")
+            return
+
+        self.mqtt_thread = MQTTThread(broker, port, topic)
+        self.mqtt_thread.data_received.connect(self.on_iot_data)
+        self.mqtt_thread.alert_triggered.connect(self.on_iot_alert)
+        self.mqtt_thread.connection_success.connect(self.on_iot_connected)
+        self.mqtt_thread.start()
+
+        self.iot_status.setText("🟡 Connexion en cours...")
+        self.iot_status.setStyleSheet("color: orange; font-weight: bold;")
+        self.connect_iot_btn.setEnabled(False)
+        self.disconnect_iot_btn.setEnabled(True)
+
+    def disconnect_iot(self):
+        if self.mqtt_thread:
+            self.mqtt_thread.stop()
+            self.mqtt_thread = None
+        self.iot_status.setText("🔴 Déconnecté")
+        self.iot_status.setStyleSheet("color: red; font-weight: bold;")
+        self.connect_iot_btn.setEnabled(True)
+        self.disconnect_iot_btn.setEnabled(False)
+
+    def on_iot_data(self, data):
+        self.iot_data_display.append(f"[{datetime.now().strftime('%H:%M:%S')}] {data}")
+        
+        # Analyser et intégrer les données dans les simulations
+        try:
+            # Essayer de parser comme JSON
+            if data.startswith('{') and data.endswith('}'):
+                import json
+                sensor_data = json.loads(data)
+                
+                # Mettre à jour les paramètres du moteur de simulation
+                if self.sim_engine:
+                    if 'temperature' in sensor_data:
+                        self.sim_engine.temperature = float(sensor_data['temperature'])
+                        self.iot_data_display.append(f"  → Température mise à jour: {self.sim_engine.temperature}°C")
+                    
+                    if 'pressure' in sensor_data:
+                        self.sim_engine.pressure = float(sensor_data['pressure'])
+                        self.iot_data_display.append(f"  → Pression mise à jour: {self.sim_engine.pressure} hPa")
+                    
+                    if 'vibration' in sensor_data:
+                        self.sim_engine.vibration = float(sensor_data['vibration'])
+                        self.iot_data_display.append(f"  → Vibration mise à jour: {self.sim_engine.vibration}")
+                    
+                    if 'humidity' in sensor_data:
+                        self.sim_engine.humidity = float(sensor_data['humidity'])
+                        self.iot_data_display.append(f"  → Humidité mise à jour: {self.sim_engine.humidity}%")
+                    
+                    # Mettre à jour l'affichage des paramètres
+                    self.update_iot_params_display()
+                    
+                    # Vérifier seuils pour alertes
+                    if self.sim_engine.temperature > 35:
+                        self.on_iot_alert(f"Température élevée détectée: {self.sim_engine.temperature}°C - Risque d'incendie augmenté")
+                    
+                    if self.sim_engine.pressure < 1000:
+                        self.on_iot_alert(f"Pression basse détectée: {self.sim_engine.pressure} hPa - Risque d'explosion augmenté")
+                    
+                    if self.sim_engine.vibration > 1.5:
+                        self.on_iot_alert(f"Vibration élevée détectée: {self.sim_engine.vibration} - Risque structurel")
+            
+            else:
+                # Données texte simples
+                self.iot_data_display.append("  → Données texte reçues (pas de mise à jour automatique)")
+                
+        except Exception as e:
+            self.iot_data_display.append(f"  → Erreur d'analyse des données: {e}")
+        
+        # Ici, on pourrait analyser les données et mettre à jour les simulations
+        # Par exemple, ajuster la température dans sim_engine
+
+    def on_iot_connected(self):
+        self.iot_status.setText("🟢 Connecté")
+        self.iot_status.setStyleSheet("color: green; font-weight: bold;")
+
+    def on_iot_alert(self, alert):
+        self.iot_alerts.append(f"[{datetime.now().strftime('%H:%M:%S')}] {alert}")
+        QMessageBox.warning(self, "Alerte IoT", alert)
+
+    def update_iot_params_display(self):
+        if self.sim_engine:
+            self.iot_params_display.setText(f"""
+            Température: {self.sim_engine.temperature:.1f}°C<br>
+            Pression: {self.sim_engine.pressure:.1f} hPa<br>
+            Vibration: {self.sim_engine.vibration:.2f}<br>
+            Humidité: {self.sim_engine.humidity:.1f}%
+            """)
+        else:
+            self.iot_params_display.setText("Aucune simulation chargée")
+
     def run_simulations(self):
         if self.sim_engine is None:
             QMessageBox.warning(self, "Info", "Charge d'abord une image.")
@@ -818,18 +1576,82 @@ class RiskSimulator(QMainWindow):
         FORMAT: Présente l'analyse en paragraphes clairs et actionnables.
         """
         
-        model_path = "models/kibali-final-merged"
+        model_path = r"c:\Users\Admin\Desktop\logiciel\models\kibali-final-merged"
         self.ai_thread = AIAnalysisThread(model_path, analysis_prompt, self.image_path)
         self.ai_thread.result_ready.connect(self.on_ai_result)
         self.ai_thread.start()
-        self.ai_label.setText("Analyse IA des dangers naturels en cours...")
+        self.ai_label.setText("Analyse IA des dangers naturels en cours...")  # type: ignore
 
     def on_ai_result(self, result):
-        self.ai_label.setText(f"Résultats IA:\n{result}")
+        self.ai_label.setText(f"Résultats IA:\n{result}")  # type: ignore
         logging.info("Analyse IA terminée.")
 
+    def send_chat_message(self):
+        message = self.chat_input.text().strip()
+        if not message:
+            return
+        
+        if not self.image_path:
+            self.chat_display.append("❌ Aucune image chargée. Chargez d'abord une image dans l'onglet Carte.")
+            return
+        
+        # Ajouter le message utilisateur au chat
+        self.chat_display.append(f"Vous: {message}")
+        self.chat_input.clear()
+        self.chat_status.setText("🤖 IA réfléchit...")
+        self.send_btn.setEnabled(False)
+        self.chat_input.setEnabled(False)
+        
+        # Lancer le thread de chat IA
+        model_path = r"c:\Users\Admin\Desktop\logiciel\models\kibali-final-merged"
+        self.chat_thread = AIChatThread(model_path, message, self.image_path, self.chat_history)
+        self.chat_thread.token_ready.connect(self.on_chat_token)
+        self.chat_thread.response_complete.connect(self.on_chat_complete)
+        self.chat_thread.start()
+
+    def on_chat_token(self, token):
+        # Ajouter le token au chat (streaming)
+        current_text = self.chat_display.toPlainText()
+        lines = current_text.split('\n')
+        
+        # Trouver ou créer la ligne IA
+        ia_line_idx = -1
+        for i, line in enumerate(lines):
+            if line.startswith('IA:'):
+                ia_line_idx = i
+                break
+        
+        if ia_line_idx == -1:
+            # Première réponse IA
+            lines.append(f'IA: {token}')
+        else:
+            # Ajouter au token existant
+            lines[ia_line_idx] += token
+        
+        self.chat_display.setPlainText('\n'.join(lines))
+        self.chat_display.moveCursor(self.chat_display.textCursor().End)  # type: ignore
+
+    def on_chat_complete(self, full_response):
+        # Ajouter la réponse complète à l'historique
+        self.chat_history.append((self.chat_input.text(), full_response))
+        
+        # S'assurer que la réponse est complète dans le display
+        current_text = self.chat_display.toPlainText()
+        if not current_text.endswith(full_response):
+            lines = current_text.split('\n')
+            if lines and lines[-1].startswith('IA:'):
+                lines[-1] = f'IA: {full_response}'
+            else:
+                lines.append(f'IA: {full_response}')
+            self.chat_display.setPlainText('\n'.join(lines))
+        
+        self.chat_status.setText("Prêt pour le chat IA")
+        self.send_btn.setEnabled(True)
+        self.chat_input.setEnabled(True)
+        self.chat_input.setFocus()
+
     def refresh_logs(self):
-        self.logs_text.setPlainText(log_stream.getvalue())
+        self.logs_text.setPlainText(log_stream.getvalue())  # type: ignore
 
     def generate_analyses(self):
         if self.sim_engine is None:
@@ -2635,8 +3457,8 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                 return
 
             # Désactiver le bouton pendant l'analyse
-            self.btn_texture_analyze.setEnabled(False)
-            self.btn_texture_analyze.setText("Analyse en cours...")
+            self.btn_texture_analyze.setEnabled(False)  # type: ignore
+            self.btn_texture_analyze.setText("Analyse en cours...")  # type: ignore
 
             # Labels de textures pour substances dangereuses et objets métalliques
             texture_labels = [
@@ -2710,8 +3532,8 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
 
             except Exception as e:
                 QMessageBox.critical(self, "Erreur modèle", f"Impossible de charger CLIP: {str(e)}")
-                self.btn_texture_analyze.setEnabled(True)
-                self.btn_texture_analyze.setText("Analyser Textures")
+                self.btn_texture_analyze.setEnabled(True)  # type: ignore
+                self.btn_texture_analyze.setText("Analyser Textures")  # type: ignore
                 return
 
             # Traiter l'image
@@ -2727,12 +3549,12 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
 
                 # Gérer différents types de retour des modèles
                 if hasattr(image_features, 'pooler_output'):
-                    image_features = image_features.pooler_output
+                    image_features = image_features.pooler_output  # type: ignore
                 elif isinstance(image_features, tuple):
                     image_features = image_features[0]
                 
                 if hasattr(text_features, 'pooler_output'):
-                    text_features = text_features.pooler_output
+                    text_features = text_features.pooler_output  # type: ignore
                 elif isinstance(text_features, tuple):
                     text_features = text_features[0]
 
@@ -2757,16 +3579,16 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
             self.display_texture_results(detected_textures, self.current_image)
 
             # Réactiver le bouton
-            self.btn_texture_analyze.setEnabled(True)
-            self.btn_texture_analyze.setText("Analyser Textures")
+            self.btn_texture_analyze.setEnabled(True)  # type: ignore
+            self.btn_texture_analyze.setText("Analyser Textures")  # type: ignore
 
             QMessageBox.information(self, "Analyse terminée",
                                   f"Analyse de textures complétée. Texture principale: {detected_textures[0][0]}")
 
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Erreur lors de l'analyse de textures: {str(e)}")
-            self.btn_texture_analyze.setEnabled(True)
-            self.btn_texture_analyze.setText("Analyser Textures")
+            self.btn_texture_analyze.setEnabled(True)  # type: ignore
+            self.btn_texture_analyze.setText("Analyser Textures")  # type: ignore
 
     def draw_complete_analysis(self, ax):
         """Dessine l'analyse complète avec tous les dangers naturels"""
@@ -3014,28 +3836,34 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
     def refresh_contour_versions(self):
         """Actualise l'affichage des versions avec contours dans l'onglet"""
         import os
-        
+
         # Chemins des images générées
         image_paths = [
             "analyse_incendie_hd.png",
-            "analyse_inondation_hd.png", 
+            "analyse_inondation_hd.png",
             "analyse_complete_ia_hd.png"
         ]
-        
+
         labels = [self.version1_image, self.version2_image, self.version3_image]
         titles = [
             "Version 1: Analyse Incendie HD",
             "Version 2: Analyse Inondation HD",
             "Version 3: Analyse Complète IA HD"
         ]
-        
+
         for i, (path, label, title) in enumerate(zip(image_paths, labels, titles)):
             if os.path.exists(path):
                 # Charger l'image avec QPixmap
                 pixmap = QPixmap(path)
                 if not pixmap.isNull():
-                    # Redimensionner si nécessaire pour l'affichage
-                    scaled_pixmap = pixmap.scaledToWidth(400, Qt.TransformationMode.SmoothTransformation)
+                    # Redimensionner pour s'adapter à la taille du conteneur tout en gardant les proportions
+                    container_size = label.size()
+                    if container_size.width() > 100 and container_size.height() > 100:
+                        # Utiliser la taille du conteneur pour le redimensionnement
+                        scaled_pixmap = pixmap.scaled(container_size * 0.9, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    else:
+                        # Taille par défaut si le conteneur n'est pas encore dimensionné
+                        scaled_pixmap = pixmap.scaledToWidth(450, Qt.TransformationMode.SmoothTransformation)
                     label.setPixmap(scaled_pixmap)
                     label.setText("")  # Effacer le texte par défaut
                 else:
@@ -3150,12 +3978,12 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
     def update_danger_study_display(self):
         """Mettre à jour l'affichage de l'étude des dangers"""
         if self.current_danger_study is None:
-            self.danger_text.setText("Aucune étude chargée.")
-            self.danger_stats_label.setText("Statistiques: Aucune étude")
+            self.danger_text.setText("Aucune étude chargée.")  # type: ignore
+            self.danger_stats_label.setText("Statistiques: Aucune étude")  # type: ignore
             return
 
         summary = self.current_danger_study.generate_summary()
-        self.danger_text.setText(summary)
+        self.danger_text.setText(summary)  # type: ignore
 
         # Mettre à jour les statistiques
         if hasattr(self.current_danger_study, 'hazards'):
@@ -3168,7 +3996,7 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
         else:
             scenario_count = 0
 
-        self.danger_stats_label.setText(f"Statistiques: {hazard_count} dangers, {scenario_count} scénarios")
+        self.danger_stats_label.setText(f"Statistiques: {hazard_count} dangers, {scenario_count} scénarios")  # type: ignore
 
     # ===============================
     # === MÉTHODES ANALYSE PDF =====
@@ -3181,7 +4009,7 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
             return
 
         try:
-            self.danger_stats_label.setText("Statistiques: Analyse en cours...")
+            self.danger_stats_label.setText("Statistiques: Analyse en cours...")  # type: ignore
 
             # Créer l'analyseur
             self.pdf_analyzer = PDFSectionAnalyzer()
@@ -3216,14 +4044,14 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                     output += f"  Cellule: {data['cell']}\n"
                 output += "\n"
 
-            self.danger_text.setText(output)
-            self.danger_stats_label.setText(f"Statistiques: Analyse terminée - {summary['total_sections']} sections")
+            self.danger_text.setText(output)  # type: ignore
+            self.danger_stats_label.setText(f"Statistiques: Analyse terminée - {summary['total_sections']} sections")  # type: ignore
 
             QMessageBox.information(self, "Succès", f"Analyse terminée: {summary['total_sections']} sections analysées!")
 
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Erreur lors de l'analyse: {str(e)}")
-            self.danger_stats_label.setText("Statistiques: Erreur d'analyse")
+            self.danger_stats_label.setText("Statistiques: Erreur d'analyse")  # type: ignore
 
     def extract_pdf_sections(self):
         """Extraire les sections d'un PDF"""
@@ -3232,7 +4060,7 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
             return
 
         try:
-            self.danger_stats_label.setText("Statistiques: Extraction en cours...")
+            self.danger_stats_label.setText("Statistiques: Extraction en cours...")  # type: ignore
 
             # Créer l'extracteur
             extractor = PDFSectionExtractor(file)
@@ -3275,14 +4103,14 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                     output += f"  ... et {len(sections_list) - 3} autres\n"
                 output += "\n"
 
-            self.danger_text.setText(output)
-            self.danger_stats_label.setText(f"Statistiques: {len(sections)} sections extraites")
+            self.danger_text.setText(output)  # type: ignore
+            self.danger_stats_label.setText(f"Statistiques: {len(sections)} sections extraites")  # type: ignore
 
             QMessageBox.information(self, "Succès", f"Extraction terminée: {len(sections)} sections sauvegardées!")
 
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Erreur lors de l'extraction: {str(e)}")
-            self.danger_stats_label.setText("Statistiques: Erreur d'extraction")
+            self.danger_stats_label.setText("Statistiques: Erreur d'extraction")  # type: ignore
 
     def generate_danger_template(self):
         """Générer un template d'étude des dangers"""
@@ -3318,8 +4146,8 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
             for phase in template['implementation_plan']:
                 output += f"- {phase}\n"
 
-            self.danger_text.setText(output)
-            self.danger_stats_label.setText("Statistiques: Template généré")
+            self.danger_text.setText(output)  # type: ignore
+            self.danger_stats_label.setText("Statistiques: Template généré")  # type: ignore
 
             QMessageBox.information(self, "Succès", "Template d'étude des dangers généré!")
 
@@ -3345,11 +4173,11 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
 
             # Redimensionner pour l'affichage
             scaled_pixmap = pixmap.scaledToWidth(300, Qt.TransformationMode.SmoothTransformation)
-            self.rag_image_label.setPixmap(scaled_pixmap)
-            self.rag_image_label.setText("")  # Effacer le texte par défaut
+            self.rag_image_label.setPixmap(scaled_pixmap)  # type: ignore
+            self.rag_image_label.setText("")  # Effacer le texte par défaut  # type: ignore
 
             self.rag_image_path = file
-            self.rag_stats_label.setText(f"Statistiques: Image chargée - {os.path.basename(file)}")
+            self.rag_stats_label.setText(f"Statistiques: Image chargée - {os.path.basename(file)}")  # type: ignore
 
             # Initialiser le système RAG si pas déjà fait
             if self.rag_system is None:
@@ -3361,7 +4189,7 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
     def initialize_rag_system(self):
         """Initialiser le système RAG"""
         try:
-            self.rag_stats_label.setText("Statistiques: Initialisation RAG...")
+            self.rag_stats_label.setText("Statistiques: Initialisation RAG...")  # type: ignore
 
             # Vérifier si le fichier d'analyse PDF existe
             pdf_analysis_file = os.path.join(os.path.dirname(__file__), "..", "pdf_analysis_results.json")
@@ -3377,11 +4205,11 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
             self.rag_system = DangerRAGSystem(pdf_analysis_file)
             self.rag_system.build_knowledge_base()
 
-            self.rag_stats_label.setText("Statistiques: RAG initialisé avec succès")
+            self.rag_stats_label.setText("Statistiques: RAG initialisé avec succès")  # type: ignore
 
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Erreur initialisation RAG: {str(e)}")
-            self.rag_stats_label.setText("Statistiques: Erreur d'initialisation RAG")
+            self.rag_stats_label.setText("Statistiques: Erreur d'initialisation RAG")  # type: ignore
 
     def analyze_image_with_rag(self):
         """Analyser l'image avec le système RAG"""
@@ -3398,10 +4226,10 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                 QMessageBox.warning(self, "Attention", "Système RAG non initialisé. Veuillez d'abord initialiser le système RAG.")
                 return
 
-            self.rag_stats_label.setText("Statistiques: Analyse RAG en cours...")
+            self.rag_stats_label.setText("Statistiques: Analyse RAG en cours...")  # type: ignore
 
             # Récupérer le contexte de localisation
-            location_context = self.rag_location_input.text().strip()
+            location_context = self.rag_location_input.text().strip()  # type: ignore
 
             # Générer l'analyse
             analysis = self.rag_system.generate_danger_analysis(self.rag_image_path, location_context)
@@ -3411,13 +4239,13 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
             # Afficher les résultats
             self.display_rag_results(analysis)
 
-            self.rag_stats_label.setText("Statistiques: Analyse RAG terminée")
+            self.rag_stats_label.setText("Statistiques: Analyse RAG terminée")  # type: ignore
 
             QMessageBox.information(self, "Succès", "Analyse RAG terminée avec succès!")
 
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Erreur lors de l'analyse RAG: {str(e)}")
-            self.rag_stats_label.setText("Statistiques: Erreur d'analyse")
+            self.rag_stats_label.setText("Statistiques: Erreur d'analyse")  # type: ignore
 
     def display_rag_results(self, analysis: Dict):
         """Afficher les résultats de l'analyse RAG"""
@@ -3483,7 +4311,7 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                 output += f"- {info['type'].upper()}: {info['title']} (Pertinence: {info['similarity_score']:.3f})\n"
             output += "\n"
 
-        self.rag_results_text.setText(output)
+        self.rag_results_text.setText(output)  # type: ignore
 
     def generate_rag_visual_report(self):
         """Générer le rapport visuel avec croquis"""
@@ -3496,7 +4324,7 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
             return
 
         try:
-            self.rag_stats_label.setText("Statistiques: Génération rapport visuel...")
+            self.rag_stats_label.setText("Statistiques: Génération rapport visuel...")  # type: ignore
 
             # Générer les visualisations
             if self.rag_image_path:
@@ -3513,10 +4341,10 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
                 annotated_pixmap = QPixmap(visual_files['annotated_image'])
                 if not annotated_pixmap.isNull():
                     scaled_pixmap = annotated_pixmap.scaledToWidth(400, Qt.TransformationMode.SmoothTransformation)
-                    self.rag_annotated_label.setPixmap(scaled_pixmap)
-                    self.rag_annotated_label.setText("")
+                    self.rag_annotated_label.setPixmap(scaled_pixmap)  # type: ignore
+                    self.rag_annotated_label.setText("")  # type: ignore
 
-            self.rag_stats_label.setText("Statistiques: Rapport visuel généré")
+            self.rag_stats_label.setText("Statistiques: Rapport visuel généré")  # type: ignore
 
             QMessageBox.information(self, "Succès",
                 f"Rapport visuel généré!\nImages sauvegardées dans le répertoire de l'image source.")
@@ -3562,7 +4390,7 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
             if not file:
                 return
 
-            self.rag_stats_label.setText("Statistiques: Export PDF en cours...")
+            self.rag_stats_label.setText("Statistiques: Export PDF en cours...")  # type: ignore
 
             doc = SimpleDocTemplate(file, pagesize=A4)
             styles = getSampleStyleSheet()
@@ -3621,13 +4449,13 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
             # Construire le PDF
             doc.build(story)
 
-            self.rag_stats_label.setText("Statistiques: PDF exporté")
+            self.rag_stats_label.setText("Statistiques: PDF exporté")  # type: ignore
 
             QMessageBox.information(self, "Succès", f"PDF exporté vers {file}!")
 
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Erreur export PDF: {str(e)}")
-            self.rag_stats_label.setText("Statistiques: Erreur export PDF")
+            self.rag_stats_label.setText("Statistiques: Erreur export PDF")  # type: ignore
 
     def generate_normalized_analysis(self):
         """Génère une analyse normalisée avec graphique style PDF (Figure 1: Zone bleue risque modéré)"""
@@ -3669,7 +4497,7 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
             risk_zone = np.where(distance <= radius, 1, 0)  # 1 = zone à risque
             
             # Afficher la zone
-            axes.imshow(risk_zone, extent=[0, 100, 0, 100], origin='lower', 
+            axes.imshow(risk_zone, extent=(0, 100, 0, 100), origin='lower', 
                        cmap='Blues', alpha=0.7)
             
             # Ajouter des contours et labels
@@ -3766,7 +4594,7 @@ Conforme à l'arrêté du 26 mai 2014 relatif aux installations classées.
 
             # Charger CLIP
             device = "cuda" if torch.cuda.is_available() else "cpu"
-            clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+            clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)  # type: ignore
             clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
             # Charger l'image
@@ -3781,7 +4609,7 @@ Conforme à l'arrêté du 26 mai 2014 relatif aux installations classées.
             ]
 
             # Analyse CLIP
-            inputs = clip_processor(text=flood_labels, images=image, return_tensors="pt", padding=True).to(device)
+            inputs = clip_processor(text=flood_labels, images=image, return_tensors="pt", padding=True).to(device)  # type: ignore
             with torch.no_grad():
                 outputs = clip_model(**inputs)
             probs = outputs.logits_per_image.softmax(dim=1)[0]
@@ -3803,7 +4631,7 @@ Conforme à l'arrêté du 26 mai 2014 relatif aux installations classées.
             ax1 = axes[0, 0]
             labels = [item[0] for item in detected_floods[:8]]
             scores = [item[1] for item in detected_floods[:8]]
-            colors = plt.cm.Blues(np.linspace(0.3, 1, len(scores)))
+            colors = plt.cm.Blues(np.linspace(0.3, 1, len(scores)))  # type: ignore
             
             bars = ax1.barh(labels, scores, color=colors)
             ax1.set_title('Niveaux de Risque Détectés par CLIP', fontweight='bold')
@@ -4020,8 +4848,8 @@ Cette analyse automatisée permet une évaluation rapide et objective des risque
             return
 
         # Récupérer les paramètres
-        site_name = self.site_name_input.text().strip()
-        location = self.location_input.text().strip()
+        site_name = self.site_name_input.text().strip()  # type: ignore
+        location = self.location_input.text().strip()  # type: ignore
 
         if not site_name:
             site_name = "Site Industriel"
@@ -4029,13 +4857,13 @@ Cette analyse automatisée permet une évaluation rapide et objective des risque
             location = "Zone Industrielle"
 
         # Désactiver le bouton pendant la génération
-        self.generate_book_btn.setEnabled(False)
-        self.generate_book_btn.setText("🔄 GÉNÉRATION EN COURS...")
-        self.book_status_text.clear()
-        self.book_status_text.append("🚀 DÉMARRAGE DE LA GÉNÉRATION DU LIVRE PDF...\n")
-        self.book_status_text.append(f"📍 Site: {site_name}\n")
-        self.book_status_text.append(f"📍 Localisation: {location}\n")
-        self.book_status_text.append("=" * 60 + "\n")
+        self.generate_book_btn.setEnabled(False)  # type: ignore
+        self.generate_book_btn.setText("🔄 GÉNÉRATION EN COURS...")  # type: ignore
+        self.book_status_text.clear()  # type: ignore
+        self.book_status_text.append("🚀 DÉMARRAGE DE LA GÉNÉRATION DU LIVRE PDF...\n")  # type: ignore
+        self.book_status_text.append(f"📍 Site: {site_name}\n")  # type: ignore
+        self.book_status_text.append(f"📍 Localisation: {location}\n")  # type: ignore
+        self.book_status_text.append("=" * 60 + "\n")  # type: ignore
 
         # Forcer la mise à jour de l'interface
         QApplication.processEvents()
@@ -4044,50 +4872,49 @@ Cette analyse automatisée permet une évaluation rapide et objective des risque
             # Importer le module web pour la génération
             from web import generate_adapted_danger_analysis
 
-            self.book_status_text.append("🧠 LANCEMENT DE L'ANALYSE IA AVANCÉE...\n")
+            self.book_status_text.append("🧠 LANCEMENT DE L'ANALYSE IA AVANCÉE...\n")  # type: ignore
             QApplication.processEvents()
 
             # Générer le livre PDF
             result = generate_adapted_danger_analysis(
                 image_path=self.image_path,
-                site_name=site_name,
                 site_location=location
             )
 
-            self.book_status_text.append("✅ LIVRE PDF GÉNÉRÉ AVEC SUCCÈS !\n")
-            self.book_status_text.append("=" * 60 + "\n")
-            self.book_status_text.append("📊 RÉSULTATS DE L'ANALYSE:\n")
+            self.book_status_text.append("✅ LIVRE PDF GÉNÉRÉ AVEC SUCCÈS !\n")  # type: ignore
+            self.book_status_text.append("=" * 60 + "\n")  # type: ignore
+            self.book_status_text.append("📊 RÉSULTATS DE L'ANALYSE:\n")  # type: ignore
 
             if isinstance(result, dict):
                 # Afficher les résultats détaillés
                 if 'livre_path' in result:
                     livre_path = result['livre_path']
-                    self.book_status_text.append(f"📖 Livre PDF: {livre_path}\n")
+                    self.book_status_text.append(f"📖 Livre PDF: {livre_path}\n")  # type: ignore
 
                     # Stocker le chemin pour le bouton "Ouvrir PDF"
                     self.generated_pdf_path = livre_path
-                    self.open_pdf_btn.setEnabled(True)
+                    self.open_pdf_btn.setEnabled(True)  # type: ignore
 
                 if 'detected_dangers' in result:
                     dangers = result['detected_dangers']
-                    self.book_status_text.append(f"⚠️ Dangers détectés: {len(dangers)}\n")
+                    self.book_status_text.append(f"⚠️ Dangers détectés: {len(dangers)}\n")  # type: ignore
                     for i, (danger, score) in enumerate(dangers[:5], 1):
-                        self.book_status_text.append(f"  {i}. {danger} (score: {score:.3f})\n")
+                        self.book_status_text.append(f"  {i}. {danger} (score: {score:.3f})\n")  # type: ignore
 
                 if 'primary_climate' in result:
                     climate = result['primary_climate']
-                    self.book_status_text.append(f"🌡️ Climat déterminé: {climate}\n")
+                    self.book_status_text.append(f"🌡️ Climat déterminé: {climate}\n")  # type: ignore
 
                 if 'web_context_count' in result:
                     web_count = result['web_context_count']
-                    self.book_status_text.append(f"🌐 Sources web intégrées: {web_count}\n")
+                    self.book_status_text.append(f"🌐 Sources web intégrées: {web_count}\n")  # type: ignore
 
                 if 'annotated_image' in result:
                     annotated = result['annotated_image']
-                    self.book_status_text.append(f"🎨 Image annotée: {annotated}\n")
+                    self.book_status_text.append(f"🎨 Image annotée: {annotated}\n")  # type: ignore
 
-            self.book_status_text.append("\n🎉 GÉNÉRATION TERMINÉE !\n")
-            self.book_status_text.append("Cliquez sur 'OUVRIR LE PDF GÉNÉRÉ' pour consulter le livre complet.\n")
+            self.book_status_text.append("\n🎉 GÉNÉRATION TERMINÉE !\n")  # type: ignore
+            self.book_status_text.append("Cliquez sur 'OUVRIR LE PDF GÉNÉRÉ' pour consulter le livre complet.\n")  # type: ignore
 
             QMessageBox.information(self, "Succès",
                 f"Livre PDF généré avec succès !\n\n"
@@ -4099,15 +4926,15 @@ Cette analyse automatisée permet une évaluation rapide et objective des risque
 
         except Exception as e:
             error_msg = f"❌ ERREUR lors de la génération: {str(e)}"
-            self.book_status_text.append(error_msg + "\n")
+            self.book_status_text.append(error_msg + "\n")  # type: ignore
             QMessageBox.critical(self, "Erreur", f"Erreur lors de la génération du livre PDF:\n\n{str(e)}")
             import traceback
             traceback.print_exc()
 
         finally:
             # Réactiver le bouton
-            self.generate_book_btn.setEnabled(True)
-            self.generate_book_btn.setText("🚀 GÉNÉRER LE LIVRE PDF COMPLET (200+ pages)")
+            self.generate_book_btn.setEnabled(True)  # type: ignore
+            self.generate_book_btn.setText("🚀 GÉNÉRER LE LIVRE PDF COMPLET (200+ pages)")  # type: ignore
 
     def open_generated_pdf(self):
         """Ouvre le PDF généré dans le lecteur par défaut"""
@@ -4241,7 +5068,138 @@ Cette analyse automatisée permet une évaluation rapide et objective des risque
 # ============ MAIN ============
 # ===============================
 if __name__ == "__main__":
+    # Activer le scaling haute DPI via variables d'environnement (PyQt6)
+    import os
+    os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
+    os.environ["QT_SCALE_FACTOR"] = "1"
+    
     app = QApplication(sys.argv)
+    
+    # Appliquer le style avec texte noir pour lisibilité maximale
+    app.setStyleSheet("""
+        /* Style avec texte noir et fonds adaptés pour lisibilité */
+        QMainWindow {
+            background-color: #f5f5f5;  /* Fond gris très clair */
+            color: #000000;  /* Texte noir */
+            border: 2px solid #cccccc;  /* Bordure grise claire */
+            border-radius: 10px;  /* Coins arrondis pour un look appareil */
+        }
+        
+        QWidget {
+            background-color: #f5f5f5;  /* Fond uniforme gris clair */
+            color: #000000;  /* Texte noir par défaut */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;  /* Police moderne */
+            font-size: 10px;  /* Taille de police adaptée aux interfaces techniques */
+        }
+        
+        /* Onglets comme des boutons d'appareil */
+        QTabWidget::pane {
+            border: 1px solid #bbbbbb;  /* Bordure des onglets */
+            background-color: #e5e5e5;  /* Fond des onglets */
+            border-radius: 5px;  /* Coins arrondis */
+        }
+        QTabBar::tab {
+            background-color: #d5d5d5;  /* Fond des onglets inactifs */
+            color: #000000;  /* Texte noir */
+            padding: 8px 16px;  /* Espacement */
+            margin-right: 2px;  /* Espace entre onglets */
+            border: 1px solid #aaaaaa;  /* Bordure */
+            border-radius: 5px;  /* Coins arrondis */
+        }
+        QTabBar::tab:selected {
+            background-color: #c5c5c5;  /* Fond de l'onglet actif, plus sombre */
+            color: #000000;  /* Texte noir */
+            border: 2px solid #999999;  /* Bordure plus épaisse pour l'actif */
+        }
+        QTabBar::tab:hover {
+            background-color: #e0e0e0;  /* Survol */
+            color: #000000;  /* Texte noir au survol */
+        }
+        
+        /* Boutons comme des contrôles d'appareil */
+        QPushButton {
+            background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #e0e0e0, stop:1 #f0f0f0);  /* Gradient clair */
+            color: #000000;  /* Texte noir */
+            border: 2px solid #999999;  /* Bordure grise */
+            border-radius: 8px;  /* Coins arrondis pour un look bouton */
+            padding: 6px 12px;  /* Espacement interne */
+            font-weight: bold;  /* Texte en gras */
+        }
+        QPushButton:hover {
+            background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f0f0f0, stop:1 #ffffff);  /* Gradient plus clair au survol */
+            border-color: #777777;  /* Bordure plus sombre */
+        }
+        QPushButton:pressed {
+            background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #d0d0d0, stop:1 #e0e0e0);  /* Gradient enfoncé */
+            border-color: #666666;  /* Bordure encore plus sombre */
+        }
+        QPushButton:disabled {
+            background-color: #e5e5e5;  /* Fond désactivé */
+            color: #999999;  /* Texte gris */
+            border-color: #cccccc;  /* Bordure désactivée */
+        }
+        
+        /* Labels et textes */
+        QLabel {
+            color: #000000;  /* Texte noir */
+            background-color: transparent;  /* Fond transparent */
+        }
+        /* Zones d'édition avec fond blanc pour contraste */
+        QTextEdit, QLineEdit {
+            background-color: #ffffff;  /* Fond blanc */
+            color: #000000;  /* Texte noir */
+            border: 1px solid #aaaaaa;  /* Bordure */
+            border-radius: 4px;  /* Coins légèrement arrondis */
+            padding: 4px;  /* Espacement interne */
+            font-family: 'Consolas', 'Courier New', monospace;  /* Police monospace pour les champs de texte */
+        }
+        QTextEdit:focus, QLineEdit:focus {
+            border-color: #777777;  /* Bordure au focus */
+        }
+        QComboBox {
+            background-color: #ffffff;  /* Fond blanc */
+            color: #000000;  /* Texte noir */
+            border: 1px solid #aaaaaa;  /* Bordure */
+            border-radius: 4px;  /* Coins arrondis */
+            padding: 4px;  /* Espacement */
+        }
+        QComboBox::drop-down {
+            border: none;  /* Pas de bordure pour la flèche */
+        }
+        QComboBox::down-arrow {
+            image: none;  /* Supprimer l'image par défaut, utiliser texte si besoin */
+            border-left: 4px solid transparent;  /* Flèche simple avec CSS */
+            border-right: 4px solid transparent;  /* Flèche simple avec CSS */
+            border-top: 4px solid #000000;  /* Flèche noire */
+            margin-right: 8px;  /* Marge */
+        }
+        QComboBox QAbstractItemView {
+            background-color: #ffffff;  /* Fond blanc du menu déroulant */
+            color: #000000;  /* Texte noir */
+            selection-background-color: #e0e0e0;  /* Sélection grise claire */
+        }
+        QCheckBox {
+            color: #000000;  /* Texte noir */
+        }
+        QCheckBox::indicator {
+            width: 16px;  /* Taille de la case */
+            height: 16px;  /* Taille de la case */
+            border: 2px solid #999999;  /* Bordure */
+            border-radius: 3px;  /* Coins arrondis */
+            background-color: #ffffff;  /* Fond blanc */
+        }
+        QCheckBox::indicator:checked {
+            background-color: #cccccc;  /* Fond gris coché */
+            image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iMTIiIHZpZXdCb3g9IjAgMCAxMiAxMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEwIDNMNC43IDguM0wyA2IiBzdHJva2U9IiMwMDAwMDAiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+Cjwvc3ZnPg==);  /* Checkmark SVG noir */
+        }
+        /* ScrollArea pour un look uniforme */
+        QScrollArea {
+            background-color: #f5f5f5;  /* Fond gris clair */
+            border: 1px solid #cccccc;  /* Bordure */
+        }
+        /* Pour les figures Matplotlib, garder un fond clair */
+    """)
+    
     window = RiskSimulator()
     window.show()
     sys.exit(app.exec())

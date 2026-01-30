@@ -108,7 +108,7 @@ def generate_adapted_danger_analysis(image_path, site_location="Gabon", disabled
     print("🔍 Analyse libre et naturelle de l'image par CLIP...")
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+    clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)  # type: ignore
     clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32", use_fast=False)
     
     # Charger l'image
@@ -145,7 +145,7 @@ def generate_adapted_danger_analysis(image_path, site_location="Gabon", disabled
     ]
     
     # Analyse CLIP avec prompts ouverts
-    description_inputs = clip_processor(text=open_description_prompts, images=image, return_tensors="pt", padding=True).to(device)
+    description_inputs = clip_processor(text=open_description_prompts, images=image, return_tensors="pt", padding=True).to(device)  # type: ignore
     with torch.no_grad():
         description_outputs = clip_model(**description_inputs)
     description_probs = description_outputs.logits_per_image.softmax(dim=1)[0]
@@ -177,7 +177,7 @@ def generate_adapted_danger_analysis(image_path, site_location="Gabon", disabled
         "environnement végétal riche"
     ]
     
-    natural_inputs = clip_processor(text=natural_prompts, images=image, return_tensors="pt", padding=True).to(device)
+    natural_inputs = clip_processor(text=natural_prompts, images=image, return_tensors="pt", padding=True).to(device)  # type: ignore
     with torch.no_grad():
         natural_outputs = clip_model(**natural_inputs)
     natural_probs = natural_outputs.logits_per_image.softmax(dim=1)[0]
@@ -198,7 +198,7 @@ def generate_adapted_danger_analysis(image_path, site_location="Gabon", disabled
         "équipements de traitement"
     ]
     
-    industrial_inputs = clip_processor(text=industrial_prompts, images=image, return_tensors="pt", padding=True).to(device)
+    industrial_inputs = clip_processor(text=industrial_prompts, images=image, return_tensors="pt", padding=True).to(device)  # type: ignore
     with torch.no_grad():
         industrial_outputs = clip_model(**industrial_inputs)
     industrial_probs = industrial_outputs.logits_per_image.softmax(dim=1)[0]
@@ -219,7 +219,7 @@ def generate_adapted_danger_analysis(image_path, site_location="Gabon", disabled
         "aménagements fonctionnels"
     ]
     
-    infra_inputs = clip_processor(text=infra_prompts, images=image, return_tensors="pt", padding=True).to(device)
+    infra_inputs = clip_processor(text=infra_prompts, images=image, return_tensors="pt", padding=True).to(device)  # type: ignore
     with torch.no_grad():
         infra_outputs = clip_model(**infra_inputs)
     infra_probs = infra_outputs.logits_per_image.softmax(dim=1)[0]
@@ -240,7 +240,7 @@ def generate_adapted_danger_analysis(image_path, site_location="Gabon", disabled
         "journée idéale pour le travail"
     ]
     
-    weather_inputs = clip_processor(text=weather_prompts, images=image, return_tensors="pt", padding=True).to(device)
+    weather_inputs = clip_processor(text=weather_prompts, images=image, return_tensors="pt", padding=True).to(device)  # type: ignore
     with torch.no_grad():
         weather_outputs = clip_model(**weather_inputs)
     weather_probs = weather_outputs.logits_per_image.softmax(dim=1)[0]
@@ -352,7 +352,7 @@ def generate_adapted_danger_analysis(image_path, site_location="Gabon", disabled
     print(f"📋 {len(danger_labels)} scénarios de danger générés spécifiquement pour les éléments détectés")
     
     # Analyse CLIP des dangers spécifiques
-    danger_inputs = clip_processor(text=danger_labels, images=image, return_tensors="pt", padding=True).to(device)
+    danger_inputs = clip_processor(text=danger_labels, images=image, return_tensors="pt", padding=True).to(device)  # type: ignore
     with torch.no_grad():
         danger_outputs = clip_model(**danger_inputs)
     danger_probs = danger_outputs.logits_per_image.softmax(dim=1)[0]
@@ -517,7 +517,7 @@ def generate_adapted_danger_analysis(image_path, site_location="Gabon", disabled
     ]
     
     # Analyse CLIP
-    inputs = clip_processor(text=danger_labels, images=image, return_tensors="pt", padding=True).to(device)
+    inputs = clip_processor(text=danger_labels, images=image, return_tensors="pt", padding=True).to(device)  # type: ignore
     with torch.no_grad():
         outputs = clip_model(**inputs)
     probs = outputs.logits_per_image.softmax(dim=1)[0]
@@ -533,7 +533,7 @@ def generate_adapted_danger_analysis(image_path, site_location="Gabon", disabled
     detected_objects = []
     try:
         # Importer YOLOv8
-        from ultralytics import YOLO
+        from ultralytics import YOLO  # type: ignore
         
         # Charger le modèle YOLO (utiliser yolov8n.pt qui est dans le projet)
         yolo_model_path = "C:\\Users\\Admin\\Desktop\\logiciel\\yolov8n.pt"
@@ -586,7 +586,7 @@ def generate_adapted_danger_analysis(image_path, site_location="Gabon", disabled
                         ]
                         
                         # Analyse CLIP de l'objet spécifique
-                        object_inputs = clip_processor(text=object_labels, images=object_crop, return_tensors="pt", padding=True).to(device)
+                        object_inputs = clip_processor(text=object_labels, images=object_crop, return_tensors="pt", padding=True).to(device)  # type: ignore
                         with torch.no_grad():
                             object_outputs = clip_model(**object_inputs)
                         object_probs = object_outputs.logits_per_image.softmax(dim=1)[0]
@@ -840,7 +840,7 @@ def generate_adapted_danger_analysis(image_path, site_location="Gabon", disabled
         "climat aride", "climat semi-aride", "climat polaire", "climat océanique"
     ]
     
-    climate_inputs = clip_processor(text=climate_labels, images=image, return_tensors="pt", padding=True).to(device)
+    climate_inputs = clip_processor(text=climate_labels, images=image, return_tensors="pt", padding=True).to(device)  # type: ignore
     with torch.no_grad():
         climate_outputs = clip_model(**climate_inputs)
     climate_probs = climate_outputs.logits_per_image.softmax(dim=1)[0]
@@ -1088,7 +1088,7 @@ def generate_adapted_danger_analysis(image_path, site_location="Gabon", disabled
                np.random.normal(4, 0.8, 100), np.random.normal(8, 2, 100)]
     labels_bp = ['Risque Faible', 'Risque Moyen', 'Risque Élevé', 'Risque Critique']
     
-    bp = ax10.boxplot(data_bp, labels=labels_bp, patch_artist=True)
+    bp = ax10.boxplot(data_bp, labels=labels_bp, patch_artist=True)  # type: ignore
     box_colors = ['lightgreen', 'yellow', 'orange', 'red']
     for patch, color in zip(bp['boxes'], box_colors):
         patch.set_facecolor(color)
@@ -1199,7 +1199,7 @@ def generate_adapted_danger_analysis(image_path, site_location="Gabon", disabled
     # Données de treemap
     labels_tm = ['Risque A', 'Risque B', 'Risque C', 'Risque D', 'Risque E', 'Risque F']
     sizes_tm = np.random.rand(6) * 100
-    colors_tm = plt.cm.Set3(np.linspace(0, 1, len(labels_tm)))
+    colors_tm = plt.cm.Set3(np.linspace(0, 1, len(labels_tm)))  # type: ignore
     
     # Treemap simplifié
     ax18.bar(range(len(labels_tm)), sizes_tm, color=colors_tm, alpha=0.7)
@@ -1356,7 +1356,7 @@ def generate_adapted_danger_analysis(image_path, site_location="Gabon", disabled
     circles = [(0, 0, 5), (3, 3, 2), (-2, 2, 1.5), (1, -3, 1), (-3, -1, 0.8)]
     
     for x, y, r in circles:
-        circle = plt.Circle((x, y), r, fill=True, alpha=0.5, color=np.random.rand(3,))
+        circle = plt.Circle((x, y), r, fill=True, alpha=0.5, color=np.random.rand(3,))  # type: ignore
         ax27.add_artist(circle)
         ax27.text(x, y, f'R{r:.1f}', ha='center', va='center', fontweight='bold')
     
@@ -1414,7 +1414,7 @@ def generate_adapted_danger_analysis(image_path, site_location="Gabon", disabled
         upper = lower + band_height
         mask = (time_series >= lower) & (time_series < upper)
         ax30.fill_between(range(len(time_series)), lower, np.where(mask, time_series, lower), 
-                         color=plt.cm.RdYlBu(i/bands), alpha=0.7)
+                         color=plt.cm.RdYlBu(i/bands), alpha=0.7)  # type: ignore
     
     ax30.set_title('Horizon Chart - Séries Temporelles Compressées\nVisualisation Multi-Bandes des Tendances', fontweight='bold')
     ax30.set_xlabel('Temps')
@@ -1501,7 +1501,7 @@ def generate_adapted_danger_analysis(image_path, site_location="Gabon", disabled
     regions_choro = ['Nord', 'Sud', 'Est', 'Ouest', 'Centre']
     risk_intensity = np.random.rand(5) * 10
     
-    colors_choro = plt.cm.YlOrRd(risk_intensity / np.max(risk_intensity))
+    colors_choro = plt.cm.YlOrRd(risk_intensity / np.max(risk_intensity))  # type: ignore
     ax35.bar(range(len(regions_choro)), risk_intensity, color=colors_choro, alpha=0.8)
     ax35.set_xticks(range(len(regions_choro)))
     ax35.set_xticklabels(regions_choro)
@@ -1635,7 +1635,7 @@ def generate_adapted_danger_analysis(image_path, site_location="Gabon", disabled
                                fontSize=28, spaceAfter=40, alignment=1, fontName='Helvetica-Bold')
     chapter_style = ParagraphStyle('Chapter', parent=styles['Heading1'],
                                  fontSize=24, spaceAfter=30, fontName='Helvetica-Bold',
-                                 textColor='darkblue')
+                                 textColor='darkblue')  # type: ignore
     section_style = ParagraphStyle('Section', parent=styles['Heading2'],
                                  fontSize=18, spaceAfter=20, fontName='Helvetica-Bold')
     subsection_style = ParagraphStyle('Subsection', parent=styles['Heading3'],
@@ -1646,13 +1646,13 @@ def generate_adapted_danger_analysis(image_path, site_location="Gabon", disabled
                                 fontSize=11, leftIndent=20, spaceAfter=8, leading=14)
     calculation_style = ParagraphStyle('Calculation', parent=styles['Normal'],
                                      fontSize=10, leftIndent=30, spaceAfter=6, leading=12,
-                                     fontName='Courier', backColor='lightgrey')
+                                     fontName='Courier', backColor='lightgrey')  # type: ignore
     risk_high_style = ParagraphStyle('RiskHigh', parent=styles['Normal'],
-                                   fontSize=12, textColor='red', fontName='Helvetica-Bold')
+                                   fontSize=12, textColor='red', fontName='Helvetica-Bold')  # type: ignore
     risk_medium_style = ParagraphStyle('RiskMedium', parent=styles['Normal'],
-                                     fontSize=12, textColor='orange', fontName='Helvetica-Bold')
+                                     fontSize=12, textColor='orange', fontName='Helvetica-Bold')  # type: ignore
     risk_low_style = ParagraphStyle('RiskLow', parent=styles['Normal'],
-                                  fontSize=12, textColor='green', fontName='Helvetica-Bold')
+                                  fontSize=12, textColor='green', fontName='Helvetica-Bold')  # type: ignore
 
     story = []
 
@@ -2624,11 +2624,11 @@ Sources consultées:"""
 
         # Légende
         legend_elements = [
-            plt.Line2D([0], [0], marker='s', color='w', markerfacecolor='red', markersize=10, label='Industriel'),
-            plt.Line2D([0], [0], marker='^', color='w', markerfacecolor='green', markersize=10, label='Naturel'),
-            plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='blue', markersize=10, label='Infrastructure'),
-            plt.Line2D([0], [0], marker='D', color='w', markerfacecolor='orange', markersize=10, label='Sécurité'),
-            plt.Line2D([0], [0], marker='*', color='w', markerfacecolor='purple', markersize=10, label='Environnemental')
+            plt.Line2D([0], [0], marker='s', color='w', markerfacecolor='red', markersize=10, label='Industriel'),  # type: ignore
+            plt.Line2D([0], [0], marker='^', color='w', markerfacecolor='green', markersize=10, label='Naturel'),  # type: ignore
+            plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='blue', markersize=10, label='Infrastructure'),  # type: ignore
+            plt.Line2D([0], [0], marker='D', color='w', markerfacecolor='orange', markersize=10, label='Sécurité'),  # type: ignore
+            plt.Line2D([0], [0], marker='*', color='w', markerfacecolor='purple', markersize=10, label='Environnemental')  # type: ignore
         ]
         ax_croquis.legend(handles=legend_elements, loc='upper right', fontsize=8)
 
@@ -3677,7 +3677,7 @@ Les simulations Monte-Carlo permettent d'explorer :
         math_graph_path = f"{graphs_dir}/graphique_40_gabon.png"
         if os.path.exists(math_graph_path):
             math_img = Image.open(math_graph_path)
-            math_img.thumbnail((500, 350), Image.Resampling.LANCZZOS)
+            math_img.thumbnail((500, 350), Image.Resampling.LANCZOS)
             math_buf = io.BytesIO()
             math_img.save(math_buf, format='PNG')
             math_buf.seek(0)

@@ -9,6 +9,8 @@ plotly>=5.15.0
 
 # Desktop GUI
 PySide6>=6.5.0
+PyQt6>=6.5.0
+PyQt6-WebEngine>=6.5.0
 pyqtgraph>=0.13.0
 
 # Geospatial analysis
@@ -47,9 +49,13 @@ deap>=1.4.0
 # Web3 and utilities
 web3>=6.15.0
 
-# PyTorch (latest stable)
-torch>=2.1.0
-torchvision>=0.16.0
+# Database
+pymysql>=1.1.0
+paho-mqtt>=1.6.0
+
+# PyTorch (already installed)
+# torch>=2.1.0
+# torchvision>=0.16.0
 
 # Hugging Face and LLM
 transformers>=4.35.0
@@ -83,5 +89,16 @@ markdown>=3.5.0
 
 # Build tools
 pyinstaller>=6.0.0
-cx_Freeze>=7.0.0</content>
-<parameter name="filePath">C:\Users\Admin\Desktop\logiciel\requirements.txt
+cx_Freeze>=7.0.0
+
+# RAG and NLP
+langchain>=0.1.0
+sentence-transformers>=2.2.0
+pypdf>=3.0.0
+python-dotenv>=1.0.0
+pytesseract>=0.3.10
+opencv-python>=4.8.0
+transformers>=4.30.0
+torch>=2.0.0
+Pillow>=10.0.0
+faiss-cpu>=1.7.0

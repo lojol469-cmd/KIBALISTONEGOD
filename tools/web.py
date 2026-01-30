@@ -1,82 +1,68 @@
-from tavily import TavilyClient
-from ddgs import DDGS
 import os
+import requests
 from dotenv import load_dotenv
+from urllib.parse import urlparse
+
+# On tente l'import propre du package officiel
+try:
+    from duckduckgo_search import DDGS
+except ImportError:
+    # Si le package n'est pas installé, on définit une classe vide pour éviter le crash au chargement
+    DDGS = None
 
 load_dotenv()
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
 def web_search(query: str, disabled=False):
-    # PROTECTION ANTI-HALLUCINATION: Vérifier si les appels web sont désactivés
-    print(f"DEBUG: web_search called with disabled={disabled} for query='{query}'")
+    """Recherche web pilotée par l'orchestrateur Kibali"""
     if disabled:
-        print(f"🔒 Recherche web désactivée pour : {query}")
         return {"results": [], "images": [], "query": query, "source": "disabled"}
+
+    # --- 1. Tentative avec Tavily (Priorité IA) ---
+    if TAVILY_API_KEY:
+        try:
+            from tavily import TavilyClient
+            tavily = TavilyClient(api_key=TAVILY_API_KEY)
+            res = tavily.search(query=query, search_depth="advanced", include_images=True)
+            return {
+                "results": res.get('results', []), 
+                "images": res.get('images', []), 
+                "query": query, 
+                "source": "tavily"
+            }
+        except Exception:
+            pass # On bascule sur le backup si Tavily échoue
+
+    # --- 2. Backup avec DuckDuckGo (Corrigé) ---
+    if DDGS is not None:
+        try:
+            with DDGS() as ddgs:
+                # Récupération des textes et images
+                results = [r for r in ddgs.text(query, max_results=5)]
+                images = [i for i in ddgs.images(query, max_results=5)]
+                return {
+                    "results": results, 
+                    "images": images, 
+                    "query": query, 
+                    "source": "duckduckgo"
+                }
+        except Exception as e:
+            return {"results": [], "images": [], "query": query, "error": str(e)}
     
-    # Si on arrive ici, c'est que disabled=False, mais on va quand même retourner vide pour être sûr
-    print(f"⚠️ APPEL WEB NON AUTORISÉ: {query}")
-    return {"results": [], "images": [], "query": query, "source": "blocked"}
+    return {"results": [], "images": [], "query": query, "error": "No search provider available"}
 
 def display_images(web_results, max_images=3):
-    """Affiche les informations des images trouvées et propose de les télécharger"""
-    if not web_results or 'images' not in web_results:
-        return "Aucune image trouvée."
+    """Formatage Markdown des images pour le chat"""
+    if not web_results or not web_results.get('images'):
+        return ""
     
     images = web_results['images']
-    if not images:
-        return "Aucune image trouvée."
-    
-    display_text = f"🖼️ **Images trouvées pour '{web_results.get('query', '')}'** ({len(images)} résultats)\n\n"
-    
-    for i, img in enumerate(images[:max_images]):
-        title = img.get('title', 'Sans titre')
-        source = img.get('source', img.get('url', ''))
-        url = img.get('url', '')
-        
-        display_text += f"**{i+1}. {title}**\n"
-        display_text += f"   📍 Source: {source}\n"
-        display_text += f"   🔗 URL: {url}\n"
-        
-        if img.get('width') and img.get('height'):
-            display_text += f"   📐 Dimensions: {img['width']}x{img['height']}\n"
-        
-        display_text += "\n"
-    
-    if len(images) > max_images:
-        display_text += f"... et {len(images) - max_images} autres images.\n"
-    
-    display_text += "💡 Utilisez `download_image(url, filename)` pour télécharger une image spécifique."
-    
-    return display_text
-
-def download_image(image_url, filename=None, save_dir="downloads/images"):
-    """Télécharge une image depuis une URL"""
-    import requests
-    import os
-    from urllib.parse import urlparse
-    
-    try:
-        # Créer le dossier de destination
-        os.makedirs(save_dir, exist_ok=True)
-        
-        # Générer un nom de fichier si non fourni
-        if not filename:
-            parsed_url = urlparse(image_url)
-            filename = os.path.basename(parsed_url.path)
-            if not filename:
-                filename = f"image_{hash(image_url) % 10000}.jpg"
-        
-        filepath = os.path.join(save_dir, filename)
-        
-        # Télécharger l'image
-        response = requests.get(image_url, timeout=10)
-        response.raise_for_status()
-        
-        with open(filepath, 'wb') as f:
-            f.write(response.content)
-        
-        return f"✅ Image téléchargée: {filepath}"
-        
-    except Exception as e:
-        return f"❌ Erreur de téléchargement: {e}"
+    output = "\n🖼️ **Inspirations visuelles trouvées :**\n"
+    for img in images[:max_images]:
+        # On gère les différents noms de clés selon le moteur (Tavily vs DDG)
+        url = img.get('url') or img.get('image')
+        title = img.get('title', 'Lien')
+        if url:
+            output += f"- [{title}]({url})\n"
+    return output

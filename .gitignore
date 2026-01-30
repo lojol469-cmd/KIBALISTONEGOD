@@ -1,7 +1,107 @@
-RISK/
-models/
+# Environnements virtuels Python
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# Cache Python
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Bases de données
+*.db
+*.sqlite
+*.sqlite3
+data.db
+gestion_data.db
+memory/faiss_index/
+
+# Modèles et poids
+*.pt
+*.pth
+*.onnx
+*.h5
+*.pkl
+models/
+florence2_model/
+kibali_engine/
+riskIA/Hunyuan3D-2.1/
+
+# Serveurs et exécutables
+hf_server/
+executables/
+build/
+ExcelApp/
+portable_launcher.spec
+
+# Bases de données portables
+mariadb/
+mariadb_portable/
+xampp.zip
+mariadb.zip
+
+# Datasets et données
+dataset_*/
+pdf_sections/
+logs_audit/
+labels/
+
+# Fichiers temporaires et de configuration
+.vscode/
 .history/
 uploads/
-LOGO VECTORISE PNG.png
-logo.svg
+*.log
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# Archives et gros fichiers
+*.zip
+*.tar.gz
+*.rar
+*.7z
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.mp4
+*.avi
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Historique et sauvegardes
+*.backup
+*.bak
+app.backup.py
+
+# Dossiers spécifiques du projet
+RISK/
+A3E/
+MAP/
+simulation_engine.py
