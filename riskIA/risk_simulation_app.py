@@ -1,24 +1,24 @@
 import sys
 import os
+# Set local cache for models
+os.environ['HF_HOME'] = os.path.join(os.path.dirname(__file__), 'models')
+os.environ['TRANSFORMERS_CACHE'] = os.path.join(os.path.dirname(__file__), 'models')
 import json
 import numpy as np
 import cv2
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QPushButton, QLabel, QLineEdit,
-    QFileDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QComboBox, QMessageBox, QTextEdit, QCheckBox, QScrollArea,
-    QDialog, QGroupBox
+    QFileDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QComboBox, QMessageBox, QTextEdit, QCheckBox, QScrollArea
 )
-from PyQt6.QtGui import QPixmap, QImage, QDesktopServices, QIcon
+from PyQt6.QtGui import QPixmap, QImage, QDesktopServices
 from PyQt6.QtCore import Qt, QUrl, QThread, pyqtSignal
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtSvgWidgets import QSvgWidget
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.patches import Rectangle, Circle, FancyBboxPatch, PathPatch
 from matplotlib.path import Path
-from matplotlib.colors import Normalize
 import matplotlib.patches as mpatches
 
 import plotly.graph_objects as go
@@ -420,92 +420,25 @@ class HeatmapWidget(QWidget):
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout()
-        self.figure, self.axes = plt.subplots(3, 2, figsize=(12, 15))
+        self.figure, self.axes = plt.subplots(3, 2, figsize=(10, 12))
         self.canvas = FigureCanvas(self.figure)
         layout.addWidget(self.canvas)
         self.setLayout(layout)
 
-        # Configurer les colormaps avancés pour une précision maximale
-        self.cmaps = {
-            "Fumée": "Blues_r",  # Inversé pour plus sombre = plus de risque
-            "Feu": "RdYlBu_r",  # Rouge-jaune-bleu inversé pour chaleur
-            "Électricité": "plasma",  # Plasma pour gradients électriques
-            "Inondation": "YlGnBu",  # Jaune-vert-bleu pour eau
-            "Explosion": "inferno"   # Inferno pour impacts violents
-        }
-
-        # Niveaux de risque pour classification précise
-        self.risk_levels = {
-            "Fumée": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
-            "Feu": [0.0, 0.3, 0.5, 0.7, 0.9, 1.0],
-            "Électricité": [0.0, 0.1, 0.3, 0.5, 0.8, 1.0],
-            "Inondation": [0.0, 0.25, 0.5, 0.75, 0.9, 1.0],
-            "Explosion": [0.0, 0.15, 0.4, 0.7, 0.85, 1.0]
-        }
-
-        self.risk_labels = ["Très Faible", "Faible", "Modéré", "Élevé", "Très Élevé", "Critique"]
-
     def show_heatmaps(self, sim_engine):
         if sim_engine is None:
             return
-
         hazards = ["Fumée", "Feu", "Électricité", "Inondation", "Explosion"]
         titles = ["Carte de Fumée", "Carte de Feu", "Carte d'Électricité", "Carte d'Inondation", "Carte d'Explosion"]
+        cmaps = ["Blues", "Reds", "Purples", "Greens", "Oranges"]
 
-        # Initialiser norm pour éviter les erreurs Pylance
-        norm = Normalize(vmin=0, vmax=1)
-        # Initialiser data avec le premier hazard pour éviter unbound
-        data = sim_engine.simulate_all(hazards[0])
-
-        for i, (hazard, title) in enumerate(zip(hazards, titles)):
+        for i, (hazard, title, cmap) in enumerate(zip(hazards, titles, cmaps)):
             ax = self.axes.flat[i]
             ax.clear()
-
-            # Obtenir les données de simulation
             data = sim_engine.simulate_all(hazard)
-
-            # Appliquer un filtre gaussien pour lisser et améliorer la précision
-            data_smooth = gaussian_filter(data, sigma=1.0)
-
-            # Utiliser le colormap avancé
-            cmap = plt.get_cmap(self.cmaps[hazard])
-
-            # Normaliser avec des niveaux de risque précis
-            levels = self.risk_levels[hazard]
-            norm = Normalize(vmin=0, vmax=1)
-
-            # Créer l'image avec interpolation pour précision maximale
-            im = ax.imshow(data_smooth, cmap=cmap, norm=norm, interpolation='bilinear', aspect='auto')
-
-            # Ajouter des contours pour les niveaux de risque
-            cs = ax.contour(data_smooth, levels=levels, colors='black', linewidths=0.5, alpha=0.7)
-            ax.clabel(cs, inline=True, fontsize=8, fmt='%.1f')
-
-            ax.set_title(f"{title}\n(Risques Précis)", fontsize=12, fontweight='bold')
-
-            # Colorbar avec niveaux de risque
-            cbar = self.figure.colorbar(im, ax=ax, shrink=0.8, ticks=levels)
-            cbar.set_ticklabels(self.risk_labels)
-            cbar.set_label('Niveau de Risque', rotation=270, labelpad=15)
-
-            # Ajouter une grille pour précision
-            ax.grid(True, alpha=0.3, linestyle='--')
-
-        # Laisser le dernier subplot vide ou pour une vue d'ensemble
-        ax_overview = self.axes.flat[5]
-        ax_overview.clear()
-        ax_overview.set_title("Vue d'Ensemble des Risques", fontsize=12, fontweight='bold')
-
-        # Calculer une carte de risque composite
-        composite_risk = np.zeros_like(data)
-        for hazard in hazards:
-            risk_data = sim_engine.simulate_all(hazard)
-            composite_risk += risk_data * 0.2  # Pondération égale
-
-        composite_smooth = gaussian_filter(composite_risk, sigma=1.5)
-        im_comp = ax_overview.imshow(composite_smooth, cmap='RdYlGn_r', norm=norm, interpolation='bilinear')
-        cbar_comp = self.figure.colorbar(im_comp, ax=ax_overview, shrink=0.8)
-        cbar_comp.set_label('Risque Composite', rotation=270, labelpad=15)
+            im = ax.imshow(data, cmap=cmap)
+            ax.set_title(title)
+            self.figure.colorbar(im, ax=ax, shrink=0.8)
 
         self.figure.tight_layout()
         self.canvas.draw()
@@ -515,60 +448,6 @@ class HeatmapWidget(QWidget):
             ax.clear()
         self.figure.clear()
         self.canvas.draw()
-
-# =====================================
-# ===== FONCTION POUR GÉNÉRER LE LOGO =====
-# =====================================
-
-def generate_logo():
-    """Génère un logo pour RISK-IA avec PIL"""
-    width, height = 300, 100
-    # Créer une image avec fond transparent ou blanc
-    img = Image.new('RGBA', (width, height), (255, 255, 255, 0))  # Transparent
-    draw = ImageDraw.Draw(img)
-    
-    try:
-        # Essayer une police système
-        font = ImageFont.truetype("arial.ttf", 36)  # Police Arial
-    except:
-        font = ImageFont.load_default()  # Police par défaut si Arial pas disponible
-    
-    # Texte principal
-    text = "RISK-IA"
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
-    x = (width - text_width) // 2
-    y = (height - text_height) // 2
-    
-    # Dessiner le texte avec un effet d'ombre ou contour
-    # Ombre
-    draw.text((x+2, y+2), text, font=font, fill=(100, 100, 100, 128))
-    # Texte principal en noir
-    draw.text((x, y), text, font=font, fill=(0, 0, 0, 255))
-    
-    # Ajouter un sous-titre
-    subtitle = "simulation du risque en milieu pétrolier"
-    try:
-        small_font = ImageFont.truetype("arial.ttf", 14)
-    except:
-        small_font = ImageFont.load_default()
-    
-    bbox_sub = draw.textbbox((0, 0), subtitle, font=small_font)
-    sub_width = bbox_sub[2] - bbox_sub[0]
-    x_sub = (width - sub_width) // 2
-    y_sub = y + text_height + 5
-    draw.text((x_sub, y_sub), subtitle, font=small_font, fill=(100, 100, 100, 255))
-    
-    # Convertir en QPixmap pour PyQt6
-    buffer = io.BytesIO()
-    img.save(buffer, format='PNG')
-    buffer.seek(0)
-    
-    from PyQt6.QtGui import QPixmap
-    pixmap = QPixmap()
-    pixmap.loadFromData(buffer.getvalue(), 'PNG')
-    return pixmap
 
 # =====================================
 # ===== APPLICATION PRINCIPALE =========
@@ -586,17 +465,6 @@ class RiskSimulator(QMainWindow):
         self.mqtt_thread = None
         self.clip_results = {}  # Pour stocker les résultats de CLIP
         self.ai_analysis_results = {}  # Pour stocker les résultats d'analyse IA
-
-        # Générer et afficher le logo animé SVG
-        logo_path = os.path.join(os.path.dirname(__file__), "logo_animated.svg")
-        self.logo_widget = QSvgWidget(logo_path)
-        self.logo_widget.setFixedSize(300, 100)
-        self.logo_widget.setStyleSheet("margin: 10px;")
-
-        # Définir l'icône de la fenêtre
-        icon_path = os.path.join(os.path.dirname(__file__), "window_icon.png")
-        window_icon = QIcon(icon_path)
-        self.setWindowIcon(window_icon)
 
         # Initialisation Kibali pour analyse avancée
         self.kibali_available = False
@@ -628,134 +496,6 @@ class RiskSimulator(QMainWindow):
 
         # Historique du chat IA
         self.chat_history = []
-
-        # Stockage des chemins d'images pour les contours
-        self.contour_image_paths = {
-            1: "analyse_incendie_hd.png",
-            2: "analyse_inondation_hd.png",
-            3: "analyse_complete_ia_hd.png"
-        }
-
-    def create_contour_version_group(self, title, image_path, version_num):
-        """Crée un groupe pour une version de contour avec image et bouton grand format"""
-
-        # Groupe pour cette version
-        group = QGroupBox(title)
-        group.setStyleSheet("""
-            QGroupBox {
-                font-weight: bold;
-                border: 2px solid #ccc;
-                border-radius: 5px;
-                margin-top: 1ex;
-                padding-top: 10px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-            }
-        """)
-
-        layout = QVBoxLayout()
-
-        # Label pour l'image
-        image_label = QLabel("Aucune image générée")
-        image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        image_label.setStyleSheet("border: 1px solid #ddd; padding: 10px; min-height: 300px; background-color: #f9f9f9;")
-        image_label.setMinimumSize(500, 350)
-
-        # Layout horizontal pour l'image et le bouton
-        image_layout = QHBoxLayout()
-
-        # Conteneur pour l'image avec scroll si nécessaire
-        image_container = QWidget()
-        image_container_layout = QVBoxLayout()
-        image_container_layout.addWidget(image_label)
-        image_container.setLayout(image_container_layout)
-
-        image_layout.addWidget(image_container, stretch=1)
-
-        # Bouton pour voir en grand format
-        btn_view_large = QPushButton("🔍 Voir en Grand")
-        btn_view_large.setFixedWidth(120)
-        btn_view_large.clicked.connect(lambda: self.show_image_large(image_path, title))
-        image_layout.addWidget(btn_view_large)
-
-        layout.addLayout(image_layout)
-
-        # Stocker la référence du label pour la mise à jour
-        setattr(self, f'version{version_num}_image', image_label)
-
-        group.setLayout(layout)
-        return group
-
-    def show_image_large(self, image_path, title):
-        """Affiche l'image en grand format dans une nouvelle fenêtre"""
-        import os
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle(f"Vue Grand Format - {title}")
-        dialog.setModal(True)
-        dialog.resize(1000, 800)
-
-        layout = QVBoxLayout()
-
-        # Label pour l'image
-        image_label = QLabel()
-        image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        if os.path.exists(image_path):
-            pixmap = QPixmap(image_path)
-            if not pixmap.isNull():
-                # Redimensionner pour s'adapter à la fenêtre tout en gardant les proportions
-                scaled_pixmap = pixmap.scaled(dialog.size() * 0.9, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                image_label.setPixmap(scaled_pixmap)
-            else:
-                image_label.setText("❌ Erreur de chargement de l'image")
-        else:
-            image_label.setText(f"📷 Image non trouvée: {image_path}")
-
-        layout.addWidget(image_label)
-
-        # Boutons
-        buttons_layout = QHBoxLayout()
-
-        btn_close = QPushButton("Fermer")
-        btn_close.clicked.connect(dialog.accept)
-        buttons_layout.addWidget(btn_close)
-
-        # Bouton pour sauvegarder
-        btn_save = QPushButton("💾 Sauvegarder")
-        btn_save.clicked.connect(lambda: self.save_large_image(image_path))
-        buttons_layout.addWidget(btn_save)
-
-        layout.addLayout(buttons_layout)
-
-        dialog.setLayout(layout)
-        dialog.exec()
-
-    def save_large_image(self, image_path):
-        """Sauvegarde l'image affichée"""
-        from PyQt6.QtWidgets import QFileDialog
-        import shutil
-
-        if not os.path.exists(image_path):
-            QMessageBox.warning(self, "Erreur", f"Image non trouvée: {image_path}")
-            return
-
-        file_name, _ = QFileDialog.getSaveFileName(
-            self,
-            "Sauvegarder l'image",
-            os.path.basename(image_path),
-            "Images (*.png *.jpg *.jpeg *.bmp)"
-        )
-
-        if file_name:
-            try:
-                shutil.copy2(image_path, file_name)
-                QMessageBox.information(self, "Succès", f"Image sauvegardée sous: {file_name}")
-            except Exception as e:
-                QMessageBox.critical(self, "Erreur", f"Erreur lors de la sauvegarde: {str(e)}")
 
         # === ONGLET 1 : Carte ===
         self.map_label = QLabel("📂 Charge une image satellite ou une photo de zone")
@@ -878,42 +618,55 @@ class RiskSimulator(QMainWindow):
         # === ONGLET 7 : Versions avec Contours ===
         self.contours_widget = QWidget()
         contours_layout = QVBoxLayout()
-
+        
         # Titre
         contours_title = QLabel("📋 Versions avec Contours Générées")
         contours_title.setStyleSheet("font-size: 14px; font-weight: bold; margin: 10px;")
         contours_layout.addWidget(contours_title)
-
-        # Scroll area pour permettre le défilement si nécessaire
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-
-        # Widget conteneur pour le scroll area
-        scroll_widget = QWidget()
-        versions_layout = QVBoxLayout(scroll_widget)
-
+        
+        # Layout horizontal pour les 3 versions
+        versions_layout = QHBoxLayout()
+        
         # Version 1
-        v1_group = self.create_contour_version_group("Version 1: Analyse Incendie HD", "analyse_incendie_hd.png", 1)
-        versions_layout.addWidget(v1_group)
-
+        self.version1_label = QLabel("Version 1: Contours Simples")
+        self.version1_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.version1_image = QLabel("Aucune image générée")
+        self.version1_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.version1_image.setStyleSheet("border: 2px solid #ccc; padding: 10px; min-height: 200px;")
+        v1_layout = QVBoxLayout()
+        v1_layout.addWidget(self.version1_label)
+        v1_layout.addWidget(self.version1_image)
+        versions_layout.addLayout(v1_layout)
+        
         # Version 2
-        v2_group = self.create_contour_version_group("Version 2: Analyse Inondation HD", "analyse_inondation_hd.png", 2)
-        versions_layout.addWidget(v2_group)
-
+        self.version2_label = QLabel("Version 2: Contours Détaillés")
+        self.version2_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.version2_image = QLabel("Aucune image générée")
+        self.version2_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.version2_image.setStyleSheet("border: 2px solid #ccc; padding: 10px; min-height: 200px;")
+        v2_layout = QVBoxLayout()
+        v2_layout.addWidget(self.version2_label)
+        v2_layout.addWidget(self.version2_image)
+        versions_layout.addLayout(v2_layout)
+        
         # Version 3
-        v3_group = self.create_contour_version_group("Version 3: Analyse Complète IA HD", "analyse_complete_ia_hd.png", 3)
-        versions_layout.addWidget(v3_group)
-
-        scroll_area.setWidget(scroll_widget)
-        contours_layout.addWidget(scroll_area)
-
+        self.version3_label = QLabel("Version 3: Contours HD")
+        self.version3_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.version3_image = QLabel("Aucune image générée")
+        self.version3_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.version3_image.setStyleSheet("border: 2px solid #ccc; padding: 10px; min-height: 200px;")
+        v3_layout = QVBoxLayout()
+        v3_layout.addWidget(self.version3_label)
+        v3_layout.addWidget(self.version3_image)
+        versions_layout.addLayout(v3_layout)
+        
+        contours_layout.addLayout(versions_layout)
+        
         # Bouton pour actualiser l'affichage
         btn_refresh_contours = QPushButton("🔄 Actualiser Versions")
         btn_refresh_contours.clicked.connect(self.refresh_contour_versions)
         contours_layout.addWidget(btn_refresh_contours)
-
+        
         self.contours_widget.setLayout(contours_layout)
         tab7 = QWidget()
         tab7.setLayout(contours_layout)
@@ -1192,21 +945,7 @@ class RiskSimulator(QMainWindow):
         # Initialiser l'affichage des contours
         self.refresh_contour_versions()
 
-        # Créer une layout principale avec le logo en haut
-        main_layout = QVBoxLayout()
-        main_layout.addWidget(self.logo_widget, alignment=Qt.AlignmentFlag.AlignCenter)  # Logo animé en haut
-        main_layout.addWidget(self.tabs)  # Onglets en dessous
-
-        # Ajouter le texte "powered by SETRAF GABON" en bas
-        powered_label = QLabel("Powered by SETRAF GABON")
-        powered_label.setStyleSheet("font-size: 10px; color: #666; text-align: center; margin: 5px;")
-        powered_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        main_layout.addWidget(powered_label)
-
-        # Widget conteneur pour la layout principale
-        main_widget = QWidget()
-        main_widget.setLayout(main_layout)
-        self.setCentralWidget(main_widget)
+        self.setCentralWidget(self.tabs)
 
     # ===============================
     def load_image(self):
@@ -1576,7 +1315,7 @@ class RiskSimulator(QMainWindow):
         FORMAT: Présente l'analyse en paragraphes clairs et actionnables.
         """
         
-        model_path = r"c:\Users\Admin\Desktop\logiciel\models\kibali-final-merged"
+        model_path = os.path.join(os.path.dirname(__file__), "models", "kibali-final-merged")
         self.ai_thread = AIAnalysisThread(model_path, analysis_prompt, self.image_path)
         self.ai_thread.result_ready.connect(self.on_ai_result)
         self.ai_thread.start()
@@ -1603,7 +1342,7 @@ class RiskSimulator(QMainWindow):
         self.chat_input.setEnabled(False)
         
         # Lancer le thread de chat IA
-        model_path = r"c:\Users\Admin\Desktop\logiciel\models\kibali-final-merged"
+        model_path = os.path.join(os.path.dirname(__file__), "models", "kibali-final-merged")
         self.chat_thread = AIChatThread(model_path, message, self.image_path, self.chat_history)
         self.chat_thread.token_ready.connect(self.on_chat_token)
         self.chat_thread.response_complete.connect(self.on_chat_complete)
@@ -2680,7 +2419,7 @@ class RiskSimulator(QMainWindow):
 
         try:
             # Charger CLIP
-            CLIP_PATH = r"C:\Users\Admin\.cache\huggingface\hub\models--openai--clip-vit-base-patch32\snapshots\3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268"
+            CLIP_PATH = os.path.join(os.path.dirname(__file__), "models", "hub", "models--openai--clip-vit-base-patch32")
             device = "cuda" if torch.cuda.is_available() else "cpu"
             model = CLIPModel.from_pretrained(CLIP_PATH).to(device)  # type: ignore
             processor = CLIPProcessor.from_pretrained(CLIP_PATH)
@@ -3503,8 +3242,8 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
 
             # Charger les modèles CLIP et Kibali fusionnés
             device = "cuda" if torch.cuda.is_available() else "cpu"
-            model_path = r"c:\Users\Admin\Desktop\logiciel\models\clip-vit-base-patch32"
-            kibali_path = r"c:\Users\Admin\Desktop\logiciel\models\kibali-final-merged"
+            model_path = os.path.join(os.path.dirname(__file__), "models", "hub", "models--openai--clip-vit-base-patch32")
+            kibali_path = os.path.join(os.path.dirname(__file__), "models", "kibali-final-merged")
 
             try:
                 # Charger CLIP de base
@@ -3836,34 +3575,28 @@ Généré le: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
     def refresh_contour_versions(self):
         """Actualise l'affichage des versions avec contours dans l'onglet"""
         import os
-
+        
         # Chemins des images générées
         image_paths = [
             "analyse_incendie_hd.png",
-            "analyse_inondation_hd.png",
+            "analyse_inondation_hd.png", 
             "analyse_complete_ia_hd.png"
         ]
-
+        
         labels = [self.version1_image, self.version2_image, self.version3_image]
         titles = [
             "Version 1: Analyse Incendie HD",
             "Version 2: Analyse Inondation HD",
             "Version 3: Analyse Complète IA HD"
         ]
-
+        
         for i, (path, label, title) in enumerate(zip(image_paths, labels, titles)):
             if os.path.exists(path):
                 # Charger l'image avec QPixmap
                 pixmap = QPixmap(path)
                 if not pixmap.isNull():
-                    # Redimensionner pour s'adapter à la taille du conteneur tout en gardant les proportions
-                    container_size = label.size()
-                    if container_size.width() > 100 and container_size.height() > 100:
-                        # Utiliser la taille du conteneur pour le redimensionnement
-                        scaled_pixmap = pixmap.scaled(container_size * 0.9, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                    else:
-                        # Taille par défaut si le conteneur n'est pas encore dimensionné
-                        scaled_pixmap = pixmap.scaledToWidth(450, Qt.TransformationMode.SmoothTransformation)
+                    # Redimensionner si nécessaire pour l'affichage
+                    scaled_pixmap = pixmap.scaledToWidth(400, Qt.TransformationMode.SmoothTransformation)
                     label.setPixmap(scaled_pixmap)
                     label.setText("")  # Effacer le texte par défaut
                 else:
@@ -4581,7 +4314,7 @@ Conforme à l'arrêté du 26 mai 2014 relatif aux installations classées.
             layout.addWidget(title)
 
             # Charger et analyser l'image
-            image_path = r"C:\Users\Admin\Desktop\logiciel\riskIA\page_5_img_1.png"
+            image_path = os.path.join(os.path.dirname(__file__), "page_5_img_1.png")
             
             if not os.path.exists(image_path):
                 QMessageBox.critical(self, "Erreur", f"Image non trouvée: {image_path}")
@@ -5068,138 +4801,7 @@ Cette analyse automatisée permet une évaluation rapide et objective des risque
 # ============ MAIN ============
 # ===============================
 if __name__ == "__main__":
-    # Activer le scaling haute DPI via variables d'environnement (PyQt6)
-    import os
-    os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
-    os.environ["QT_SCALE_FACTOR"] = "1"
-    
     app = QApplication(sys.argv)
-    
-    # Appliquer le style avec texte noir pour lisibilité maximale
-    app.setStyleSheet("""
-        /* Style avec texte noir et fonds adaptés pour lisibilité */
-        QMainWindow {
-            background-color: #f5f5f5;  /* Fond gris très clair */
-            color: #000000;  /* Texte noir */
-            border: 2px solid #cccccc;  /* Bordure grise claire */
-            border-radius: 10px;  /* Coins arrondis pour un look appareil */
-        }
-        
-        QWidget {
-            background-color: #f5f5f5;  /* Fond uniforme gris clair */
-            color: #000000;  /* Texte noir par défaut */
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;  /* Police moderne */
-            font-size: 10px;  /* Taille de police adaptée aux interfaces techniques */
-        }
-        
-        /* Onglets comme des boutons d'appareil */
-        QTabWidget::pane {
-            border: 1px solid #bbbbbb;  /* Bordure des onglets */
-            background-color: #e5e5e5;  /* Fond des onglets */
-            border-radius: 5px;  /* Coins arrondis */
-        }
-        QTabBar::tab {
-            background-color: #d5d5d5;  /* Fond des onglets inactifs */
-            color: #000000;  /* Texte noir */
-            padding: 8px 16px;  /* Espacement */
-            margin-right: 2px;  /* Espace entre onglets */
-            border: 1px solid #aaaaaa;  /* Bordure */
-            border-radius: 5px;  /* Coins arrondis */
-        }
-        QTabBar::tab:selected {
-            background-color: #c5c5c5;  /* Fond de l'onglet actif, plus sombre */
-            color: #000000;  /* Texte noir */
-            border: 2px solid #999999;  /* Bordure plus épaisse pour l'actif */
-        }
-        QTabBar::tab:hover {
-            background-color: #e0e0e0;  /* Survol */
-            color: #000000;  /* Texte noir au survol */
-        }
-        
-        /* Boutons comme des contrôles d'appareil */
-        QPushButton {
-            background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #e0e0e0, stop:1 #f0f0f0);  /* Gradient clair */
-            color: #000000;  /* Texte noir */
-            border: 2px solid #999999;  /* Bordure grise */
-            border-radius: 8px;  /* Coins arrondis pour un look bouton */
-            padding: 6px 12px;  /* Espacement interne */
-            font-weight: bold;  /* Texte en gras */
-        }
-        QPushButton:hover {
-            background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f0f0f0, stop:1 #ffffff);  /* Gradient plus clair au survol */
-            border-color: #777777;  /* Bordure plus sombre */
-        }
-        QPushButton:pressed {
-            background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #d0d0d0, stop:1 #e0e0e0);  /* Gradient enfoncé */
-            border-color: #666666;  /* Bordure encore plus sombre */
-        }
-        QPushButton:disabled {
-            background-color: #e5e5e5;  /* Fond désactivé */
-            color: #999999;  /* Texte gris */
-            border-color: #cccccc;  /* Bordure désactivée */
-        }
-        
-        /* Labels et textes */
-        QLabel {
-            color: #000000;  /* Texte noir */
-            background-color: transparent;  /* Fond transparent */
-        }
-        /* Zones d'édition avec fond blanc pour contraste */
-        QTextEdit, QLineEdit {
-            background-color: #ffffff;  /* Fond blanc */
-            color: #000000;  /* Texte noir */
-            border: 1px solid #aaaaaa;  /* Bordure */
-            border-radius: 4px;  /* Coins légèrement arrondis */
-            padding: 4px;  /* Espacement interne */
-            font-family: 'Consolas', 'Courier New', monospace;  /* Police monospace pour les champs de texte */
-        }
-        QTextEdit:focus, QLineEdit:focus {
-            border-color: #777777;  /* Bordure au focus */
-        }
-        QComboBox {
-            background-color: #ffffff;  /* Fond blanc */
-            color: #000000;  /* Texte noir */
-            border: 1px solid #aaaaaa;  /* Bordure */
-            border-radius: 4px;  /* Coins arrondis */
-            padding: 4px;  /* Espacement */
-        }
-        QComboBox::drop-down {
-            border: none;  /* Pas de bordure pour la flèche */
-        }
-        QComboBox::down-arrow {
-            image: none;  /* Supprimer l'image par défaut, utiliser texte si besoin */
-            border-left: 4px solid transparent;  /* Flèche simple avec CSS */
-            border-right: 4px solid transparent;  /* Flèche simple avec CSS */
-            border-top: 4px solid #000000;  /* Flèche noire */
-            margin-right: 8px;  /* Marge */
-        }
-        QComboBox QAbstractItemView {
-            background-color: #ffffff;  /* Fond blanc du menu déroulant */
-            color: #000000;  /* Texte noir */
-            selection-background-color: #e0e0e0;  /* Sélection grise claire */
-        }
-        QCheckBox {
-            color: #000000;  /* Texte noir */
-        }
-        QCheckBox::indicator {
-            width: 16px;  /* Taille de la case */
-            height: 16px;  /* Taille de la case */
-            border: 2px solid #999999;  /* Bordure */
-            border-radius: 3px;  /* Coins arrondis */
-            background-color: #ffffff;  /* Fond blanc */
-        }
-        QCheckBox::indicator:checked {
-            background-color: #cccccc;  /* Fond gris coché */
-            image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iMTIiIHZpZXdCb3g9IjAgMCAxMiAxMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEwIDNMNC43IDguM0wyA2IiBzdHJva2U9IiMwMDAwMDAiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+Cjwvc3ZnPg==);  /* Checkmark SVG noir */
-        }
-        /* ScrollArea pour un look uniforme */
-        QScrollArea {
-            background-color: #f5f5f5;  /* Fond gris clair */
-            border: 1px solid #cccccc;  /* Bordure */
-        }
-        /* Pour les figures Matplotlib, garder un fond clair */
-    """)
-    
     window = RiskSimulator()
     window.show()
     sys.exit(app.exec())
