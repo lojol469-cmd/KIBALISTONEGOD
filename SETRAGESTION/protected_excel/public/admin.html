@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔐 Admin - Gestion des Licences SETRAF</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            text-align: center;
+        }
+
+        .header h1 {
+            color: #667eea;
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+
+        .stat-card h3 {
+            color: #667eea;
+            font-size: 36px;
+            margin-bottom: 5px;
+        }
+
+        .stat-card p {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .requests-container {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .request-card {
+            border: 2px solid #e0e0e0;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .request-card:hover {
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.2);
+            border-color: #667eea;
+        }
+
+        .request-card.pending {
+            border-left: 5px solid #ffa726;
+        }
+
+        .request-card.activated {
+            border-left: 5px solid #66bb6a;
+            background-color: #f1f8f4;
+        }
+
+        .request-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .request-header h3 {
+            color: #333;
+            font-size: 20px;
+        }
+
+        .status-badge {
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status-badge.pending {
+            background-color: #fff3e0;
+            color: #f57c00;
+        }
+
+        .status-badge.activated {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .request-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .info-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .info-item label {
+            font-size: 12px;
+            color: #999;
+            margin-bottom: 5px;
+        }
+
+        .info-item span {
+            font-size: 14px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .fingerprint {
+            font-family: monospace;
+            font-size: 11px;
+            word-break: break-all;
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .btn {
+            padding: 12px 25px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-validate {
+            background: linear-gradient(135deg, #66bb6a 0%, #43a047 100%);
+            color: white;
+            flex: 1;
+        }
+
+        .btn-validate:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 187, 106, 0.4);
+        }
+
+        .btn-validate:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-delete {
+            background: #ef5350;
+            color: white;
+            padding: 12px 20px;
+        }
+
+        .btn-delete:hover {
+            background: #e53935;
+        }
+
+        .license-code {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            font-family: monospace;
+            font-size: 14px;
+            text-align: center;
+            border: 2px dashed #66bb6a;
+        }
+
+        .message {
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+            display: none;
+        }
+
+        .message.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .message.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+
+        .empty-state h3 {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔐 Administration des Licences SETRAF</h1>
+            <p>Gestion et validation des demandes de licence</p>
+        </div>
+
+        <div class="stats">
+            <div class="stat-card">
+                <h3 id="totalRequests">0</h3>
+                <p>Demandes totales</p>
+            </div>
+            <div class="stat-card">
+                <h3 id="pendingRequests">0</h3>
+                <p>En attente</p>
+            </div>
+            <div class="stat-card">
+                <h3 id="activatedRequests">0</h3>
+                <p>Activées</p>
+            </div>
+        </div>
+
+        <div class="requests-container">
+            <h2 style="margin-bottom: 20px; color: #333;">📋 Demandes de licence</h2>
+            <div id="requestsList"></div>
+        </div>
+    </div>
+
+    <script>
+        async function loadRequests() {
+            try {
+                const response = await fetch('http://localhost:4000/admin/requests');
+                const data = await response.json();
+                
+                const requestsList = document.getElementById('requestsList');
+                const requests = data.requests || {};
+                const requestsArray = Object.values(requests);
+
+                if (requestsArray.length === 0) {
+                    requestsList.innerHTML = `
+                        <div class="empty-state">
+                            <h3>📭 Aucune demande</h3>
+                            <p>Les demandes de licence apparaîtront ici</p>
+                        </div>
+                    `;
+                    document.getElementById('totalRequests').textContent = '0';
+                    document.getElementById('pendingRequests').textContent = '0';
+                    document.getElementById('activatedRequests').textContent = '0';
+                    return;
+                }
+
+                // Calculer les statistiques
+                const pending = requestsArray.filter(r => r.status === 'pending').length;
+                const activated = requestsArray.filter(r => r.status === 'activated').length;
+                
+                document.getElementById('totalRequests').textContent = requestsArray.length;
+                document.getElementById('pendingRequests').textContent = pending;
+                document.getElementById('activatedRequests').textContent = activated;
+
+                // Afficher les demandes (les plus récentes d'abord)
+                requestsList.innerHTML = requestsArray
+                    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+                    .map(request => createRequestCard(request))
+                    .join('');
+
+            } catch (error) {
+                console.error('Erreur chargement des demandes:', error);
+                document.getElementById('requestsList').innerHTML = `
+                    <div class="message error">
+                        ❌ Erreur de chargement. Vérifiez que le serveur est démarré.
+                    </div>
+                `;
+            }
+        }
+
+        function createRequestCard(request) {
+            const date = new Date(request.timestamp).toLocaleString('fr-FR');
+            const isActivated = request.status === 'activated';
+            
+            return `
+                <div class="request-card ${request.status}">
+                    <div class="request-header">
+                        <h3>👤 ${request.userName}</h3>
+                        <span class="status-badge ${request.status}">
+                            ${isActivated ? '✅ Activée' : '⏳ En attente'}
+                        </span>
+                    </div>
+                    
+                    <div class="request-info">
+                        <div class="info-item">
+                            <label>📧 Email</label>
+                            <span>${request.userEmail}</span>
+                        </div>
+                        <div class="info-item">
+                            <label>🆔 Carte d'identité</label>
+                            <span>${request.idCard}</span>
+                        </div>
+                        <div class="info-item">
+                            <label>📅 Date de demande</label>
+                            <span>${date}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="info-item">
+                        <label>🖥️ Empreinte machine</label>
+                        <span class="fingerprint">${request.fingerprint}</span>
+                    </div>
+
+                    ${isActivated && request.licenseCode ? `
+                        <div class="license-code">
+                            🔑 Code de licence : <strong>${request.licenseCode}</strong>
+                        </div>
+                    ` : ''}
+
+                    <div id="message-${request.fingerprint}" class="message"></div>
+
+                    <div class="actions">
+                        ${!isActivated ? `
+                            <button class="btn btn-validate" onclick="validateAndSend('${request.fingerprint}', '${request.userEmail}', '${request.userName}')">
+                                ✅ Générer et envoyer le code
+                            </button>
+                        ` : `
+                            <button class="btn btn-validate" disabled>
+                                ✅ Déjà activée
+                            </button>
+                        `}
+                    </div>
+                </div>
+            `;
+        }
+
+        async function validateAndSend(fingerprint, email, userName) {
+            const messageDiv = document.getElementById(`message-${fingerprint}`);
+            messageDiv.style.display = 'none';
+
+            // Générer un code de licence
+            const licenseCode = generateLicenseCode(fingerprint);
+
+            try {
+                const response = await fetch('http://localhost:4000/admin/send-license', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        fingerprint,
+                        email,
+                        userName,
+                        licenseCode
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    messageDiv.className = 'message success';
+                    messageDiv.innerHTML = `
+                        ✅ <strong>Licence envoyée avec succès !</strong><br>
+                        Email envoyé à ${email}<br>
+                        Code de licence : <strong>${licenseCode}</strong>
+                    `;
+                    messageDiv.style.display = 'block';
+
+                    // Recharger les demandes après 2 secondes
+                    setTimeout(() => {
+                        loadRequests();
+                    }, 2000);
+                } else {
+                    throw new Error(data.error || 'Erreur inconnue');
+                }
+
+            } catch (error) {
+                messageDiv.className = 'message error';
+                messageDiv.innerHTML = `❌ <strong>Erreur :</strong> ${error.message}`;
+                messageDiv.style.display = 'block';
+            }
+        }
+
+        function generateLicenseCode(fingerprint) {
+            // Générer un code basé sur l'empreinte + timestamp
+            const timestamp = Date.now().toString(36);
+            const hash = fingerprint.substring(0, 8).toUpperCase();
+            return `SETRAF-${hash}-${timestamp.toUpperCase()}`;
+        }
+
+        // Charger les demandes au démarrage
+        loadRequests();
+
+        // Actualiser toutes les 10 secondes
+        setInterval(loadRequests, 10000);
+    </script>
+</body>
+</html>

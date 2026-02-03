@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔐 Demande de Licence SETRAF</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+            animation: slideUp 0.5s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            color: #667eea;
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 16px;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        .form-group label {
+            display: block;
+            color: #333;
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 15px;
+            transition: all 0.3s ease;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .form-group .readonly {
+            background-color: #f5f5f5;
+            cursor: not-allowed;
+        }
+
+        button {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .message {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .message.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .message.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .message.info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        .info-box {
+            background-color: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin-bottom: 25px;
+            border-radius: 4px;
+        }
+
+        .info-box h3 {
+            color: #667eea;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+
+        .info-box ul {
+            margin-left: 20px;
+            color: #666;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+
+        .spinner {
+            display: none;
+            margin: 10px auto;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            color: #999;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔐 Demande de Licence</h1>
+            <p>SETRAF - Système de Gestion des Risques 2026</p>
+        </div>
+
+        <div class="info-box">
+            <h3>📋 Processus de demande</h3>
+            <ul>
+                <li>Remplissez le formulaire ci-dessous</li>
+                <li>Votre demande sera envoyée à l'administrateur</li>
+                <li>Vous recevrez un email d'autorisation avec votre code de licence</li>
+                <li>Copiez ce code dans l'application pour l'activer</li>
+            </ul>
+        </div>
+
+        <div id="message" class="message"></div>
+        
+        <!-- Formulaire d'activation (si demande déjà faite) -->
+        <div id="activationForm" style="display: none;">
+            <div class="info-box">
+                <h3>🎉 Demande déjà envoyée</h3>
+                <p>Vous avez déjà fait une demande de licence.</p>
+                <p><strong>Nom:</strong> <span id="savedUserName"></span></p>
+                <p><strong>Email:</strong> <span id="savedUserEmail"></span></p>
+            </div>
+
+            <div class="form-group">
+                <label for="activationCode">🔑 Code de licence (reçu par email)</label>
+                <input type="text" id="activationCode" placeholder="Entrez le code reçu par email" required>
+            </div>
+
+            <button type="button" id="activateBtn" onclick="activateLicense()">✅ Activer la licence</button>
+            
+            <div style="text-align: center; margin-top: 15px;">
+                <a href="#" onclick="showNewRequestForm(); return false;" style="color: #667eea; text-decoration: none;">📝 Faire une nouvelle demande</a>
+            </div>
+        </div>
+
+        <!-- Formulaire de nouvelle demande -->
+        <form id="licenseForm" style="display: none;">
+            <div class="form-group">
+                <label for="userName">👤 Nom complet *</label>
+                <input type="text" id="userName" name="userName" required placeholder="Entrez votre nom complet">
+            </div>
+
+            <div class="form-group">
+                <label for="userEmail">📧 Email *</label>
+                <input type="email" id="userEmail" name="userEmail" required placeholder="votre.email@exemple.com">
+            </div>
+
+            <div class="form-group">
+                <label for="idCard">🆔 Numéro de carte d'identité *</label>
+                <input type="text" id="idCard" name="idCard" required placeholder="Votre numéro de carte d'identité">
+            </div>
+
+            <div class="form-group">
+                <label for="fingerprint">🖥️ Empreinte machine (générée automatiquement)</label>
+                <input type="text" id="fingerprint" name="fingerprint" readonly class="readonly" placeholder="Chargement...">
+            </div>
+
+            <div class="spinner" id="spinner"></div>
+
+            <button type="submit" id="submitBtn">📤 Envoyer la demande</button>
+        </form>
+
+        <div class="footer">
+            <p>© 2026 SETRAF - Tous droits réservés</p>
+        </div>
+    </div>
+
+    <script>
+        let machineFingerprint = '';
+
+        // Generate machine fingerprint
+        async function generateFingerprint() {
+            try {
+                const canvas = document.createElement('canvas');
+                const gl = canvas.getContext('webgl');
+                
+                const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                const vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+                const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+                
+                const data = {
+                    userAgent: navigator.userAgent,
+                    language: navigator.language,
+                    platform: navigator.platform,
+                    vendor: vendor,
+                    renderer: renderer,
+                    screen: `${screen.width}x${screen.height}`,
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                    cores: navigator.hardwareConcurrency,
+                };
+
+                const fingerprintStr = JSON.stringify(data);
+                const msgBuffer = new TextEncoder().encode(fingerprintStr);
+                const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+                const hashArray = Array.from(new Uint8Array(hashBuffer));
+                const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+                
+                return hashHex;
+            } catch (error) {
+                console.error('Error generating fingerprint:', error);
+                return 'unknown-' + Date.now();
+            }
+        }
+
+        // Vérifier si l'utilisateur a déjà fait une demande
+        async function checkExistingRequest(fingerprint) {
+            try {
+                const response = await fetch('http://localhost:4000/check-request', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ fingerprint })
+                });
+
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Error checking request:', error);
+                return { hasRequest: false };
+            }
+        }
+
+        // Afficher le formulaire d'activation
+        function showActivationForm(userData) {
+            document.getElementById('activationForm').style.display = 'block';
+            document.getElementById('licenseForm').style.display = 'none';
+            document.getElementById('savedUserName').textContent = userData.userName;
+            document.getElementById('savedUserEmail').textContent = userData.userEmail;
+        }
+
+        // Afficher le formulaire de nouvelle demande
+        function showNewRequestForm() {
+            document.getElementById('activationForm').style.display = 'none';
+            document.getElementById('licenseForm').style.display = 'block';
+            document.getElementById('message').style.display = 'none';
+        }
+
+        // Activer la licence avec le code
+        async function activateLicense() {
+            const activateBtn = document.getElementById('activateBtn');
+            const messageDiv = document.getElementById('message');
+            const licenseCode = document.getElementById('activationCode').value.trim();
+
+            if (!licenseCode) {
+                messageDiv.className = 'message error';
+                messageDiv.innerHTML = '❌ Veuillez entrer le code de licence';
+                messageDiv.style.display = 'block';
+                return;
+            }
+
+            activateBtn.disabled = true;
+            messageDiv.style.display = 'none';
+
+            try {
+                const response = await fetch('http://localhost:4000/validate-license', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        fingerprint: machineFingerprint,
+                        licenseCode: licenseCode
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    messageDiv.className = 'message success';
+                    messageDiv.innerHTML = `
+                        <strong>✅ ${data.message}</strong><br><br>
+                        Votre licence a été activée avec succès!<br>
+                        Vous pouvez maintenant fermer cette fenêtre et redémarrer l'application.
+                    `;
+                    document.getElementById('activationCode').value = '';
+                } else {
+                    throw new Error(data.error || 'Erreur inconnue');
+                }
+
+            } catch (error) {
+                messageDiv.className = 'message error';
+                messageDiv.innerHTML = `
+                    <strong>❌ Erreur</strong><br>
+                    ${error.message}<br><br>
+                    Vérifiez que le code est correct.
+                `;
+            } finally {
+                activateBtn.disabled = false;
+                messageDiv.style.display = 'block';
+            }
+        }
+
+        // Load fingerprint on page load
+        window.addEventListener('DOMContentLoaded', async () => {
+            machineFingerprint = await generateFingerprint();
+            document.getElementById('fingerprint').value = machineFingerprint;
+
+            // Vérifier si l'utilisateur a déjà fait une demande
+            const existingRequest = await checkExistingRequest(machineFingerprint);
+            
+            if (existingRequest.hasRequest) {
+                showActivationForm(existingRequest);
+            } else {
+                showNewRequestForm();
+            }
+        });
+
+        // Handle form submission
+        document.getElementById('licenseForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const submitBtn = document.getElementById('submitBtn');
+            const spinner = document.getElementById('spinner');
+            const messageDiv = document.getElementById('message');
+
+            // Disable button and show spinner
+            submitBtn.disabled = true;
+            spinner.style.display = 'block';
+            messageDiv.style.display = 'none';
+
+            const formData = {
+                userName: document.getElementById('userName').value,
+                userEmail: document.getElementById('userEmail').value,
+                idCard: document.getElementById('idCard').value,
+                fingerprint: machineFingerprint
+            };
+
+            try {
+                const response = await fetch('http://localhost:4000/request-license', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(formData)
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    messageDiv.className = 'message success';
+                    messageDiv.innerHTML = `
+                        <strong>✅ Demande envoyée avec succès !</strong><br><br>
+                        ${data.message}<br><br>
+                        <strong>Prochaines étapes :</strong><br>
+                        1. Vérifiez votre boîte email<br>
+                        2. Attendez l'email d'autorisation de SETRAF<br>
+                        3. Copiez le code de licence fourni<br>
+                        4. Rechargez cette page et entrez le code
+                    `;
+                    
+                    // Afficher le formulaire d'activation après 3 secondes
+                    setTimeout(() => {
+                        showActivationForm({ userName: formData.userName, userEmail: formData.userEmail });
+                    }, 3000);
+                } else {
+                    throw new Error(data.error || 'Erreur inconnue');
+                }
+
+            } catch (error) {
+                messageDiv.className = 'message error';
+                messageDiv.innerHTML = `
+                    <strong>❌ Erreur</strong><br>
+                    ${error.message}<br><br>
+                    Veuillez vérifier que le serveur est démarré et réessayer.
+                `;
+            } finally {
+                submitBtn.disabled = false;
+                spinner.style.display = 'none';
+                messageDiv.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>

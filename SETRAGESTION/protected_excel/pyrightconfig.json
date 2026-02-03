@@ -1,0 +1,35 @@
+{
+  "include": [
+    "."
+  ],
+  "exclude": [
+    "node_modules",
+    "venv",
+    "python311",
+    "__pycache__",
+    "dist",
+    "build",
+    "user_databases"
+  ],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "useLibraryCodeForTypes": true,
+  "reportMissingImports": "none",
+  "reportMissingTypeStubs": "none",
+  "reportMissingModuleSource": "none",
+  "pythonPlatform": "Windows",
+  "executionEnvironments": [
+    {
+      "root": ".",
+      "pythonVersion": "3.11",
+      "pythonPlatform": "Windows",
+      "extraPaths": [
+        "./python311/Lib/site-packages",
+        "./python311/Lib",
+        "./"
+      ]
+    }
+  ],
+  "venvPath": ".",
+  "venv": "python311"
+}
